@@ -14,6 +14,8 @@ export class CodexExecutor {
     await mkdir(this.codexHome,{recursive:true,mode:0o700});
     const codexHome=await realpath(this.codexHome),home=join(codexHome,'runtime-home'),temp=join(workspace,'.tmp');
     await mkdir(home,{recursive:true,mode:0o700});await mkdir(temp,{recursive:true,mode:0o700});
+    // Linux bwrap must see denied credential paths as directories before resolving masks.
+    for(const name of ['.aws','.codex']) await mkdir(join(workspace,name),{recursive:true,mode:0o700});
     const childEnv={PATH:this.env.PATH??'/usr/local/bin:/usr/bin:/bin',HOME:home,TMPDIR:temp,LANG:'C.UTF-8',CODEX_HOME:codexHome};
     if(this.env.OPENAI_API_KEY) childEnv.OPENAI_API_KEY=this.env.OPENAI_API_KEY;
     const config={
