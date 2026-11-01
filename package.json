@@ -48,7 +48,9 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "service:check": "npm --prefix service test",
+    "service:start": "npm --prefix service start"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

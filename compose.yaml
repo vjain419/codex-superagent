@@ -1,0 +1,22 @@
+services:
+  superagent:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+      args:
+        CODEX_VERSION: 0.166.0
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3082:3082"
+    volumes:
+      - superagent-data:/data
+      - superagent-repos:/repos
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+volumes:
+  superagent-data:
+  superagent-repos:

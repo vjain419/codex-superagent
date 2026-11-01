@@ -1,0 +1,13 @@
+**/node_modules
+**/data
+**/.env
+**/.env.*
+**/auth.json
+**/.codex
+**/workspaces
+**/*.env
+**/*.sqlite*
+.git
+.agents
+work
+outputs

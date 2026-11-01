@@ -12,7 +12,7 @@ This repository is a research fork based on [`deepseek-ai/dsh-superagent-prototy
 
 ## Model preferences
 
-When model selection is available, use the root agent for project management, GPT-6.1 Sol high for engineering, GPT-6.1 Terra max for bounded connector work, and GPT-6 Luna high for focused validation or documentation.
+When model selection is available, use the root agent for project management, GPT-6.1 Sol high for engineering, GPT-6.1 Terra max for bounded connector work, and `gpt-6-luna` high for focused validation or documentation.
 
 ## Skills
 
