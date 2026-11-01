@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../core/store.mjs';
+import { Runtime } from '../core/runtime.mjs';
+
+function fixture(t) { const dir=mkdtempSync(join(tmpdir(),'superagent-')); const store=new Store(join(dir,'state.sqlite')); t.after(()=>{store.close();rmSync(dir,{recursive:true,force:true})});return {dir,store}; }
+const request = id => ({id,source:'slack',kind:'request',authorized:true,text:'Investigate tests',reply:{channel:'C1',threadTs:'1'}});
+const failure = id => ({id,source:'ci',kind:'ci',job:'jenkins/unit',build:id,status:'completed',outcome:'failure',text:'Tests failed'});
+
+test('durable intake deduplicates and explicit authorization gates work',t=>{ const {store,dir}=fixture(t);assert.equal(store.ingest(request('one')).ticket.status,'queued');assert.equal(store.ingest(request('one')).duplicate,true);assert.equal(store.ingest({...request('two'),authorized:false}).ticket,undefined);assert.equal(store.ingest(failure('3')).ticket.status,'observed');assert.equal(store.ingest(failure('4'),{mode:'auto'}).ticket.status,'queued');const reopened=new Store(join(dir,'state.sqlite'));assert.equal(reopened.listTickets().length,3);reopened.close(); });
+
+test('entire initial CI batch is baseline; next failure creates work',t=>{const {store}=fixture(t);const runtime=new Runtime({store,executor:{},config:{mode:'auto'}});runtime.handleEvents([failure('1'),failure('2')],{sourceKey:'jenkins',baseline:true});assert.equal(store.listTickets().length,0);assert.equal(store.getState('baseline:jenkins'),true);assert.equal(store.ingest(failure('3'),{mode:'auto'}).ticket.status,'queued');assert.equal(store.ingest({...failure('1'),id:'1-later-state'}).ticket,undefined);});
+
+test('sequential execution, usage and outbox survive delivery retries',async t=>{const {store,dir}=fixture(t);let active=0,max=0;const runtime=new Runtime({store,config:{mode:'observe',workspaceRoot:join(dir,'tickets')},executor:{async execute(job,onUsage){max=Math.max(max,++active);assert.ok(existsSync(job.workspace));onUsage({inputTokens:12,outputTokens:3,totalTokens:15});await new Promise(r=>setTimeout(r,5));active--;return {text:'Fixed',usage:{inputTokens:12,outputTokens:3,totalTokens:15}}}}});runtime.handleEvent(request('a'));runtime.handleEvent(request('b'));await runtime.drain();assert.equal(max,1);assert.deepEqual(store.listTickets().map(x=>x.status),['succeeded','succeeded']);assert.equal(store.metrics().tokens.totalTokens,30);let rows=store.listOutbox();assert.equal(rows.length,2);store.markOutboxFailed(rows[0].id,'temporary');assert.equal(store.listOutbox()[0].attempts,1);store.markOutboxSent(rows[0].id);assert.equal(store.listOutbox().length,1);});
+
+test('startup interrupts running work and never replays it',async t=>{const {store,dir}=fixture(t);const ticket=store.ingest(request('a')).ticket;store.updateTicket(ticket.id,{status:'running'});let calls=0;const runtime=new Runtime({store,config:{workspaceRoot:dir},executor:{execute(){calls++;}}});await runtime.drain();assert.equal(store.getTicket(ticket.id).status,'interrupted');assert.equal(calls,0);assert.equal(store.listOutbox().length,1);});
+
+test('stop aborts active ticket; changing to observe prevents queued proactive work',async t=>{const {store,dir}=fixture(t);const config={mode:'auto',workspaceRoot:join(dir,'tickets')};const runtime=new Runtime({store,config,executor:{execute({signal}){return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))}}});runtime.handleEvent(request('active'));runtime.handleEvent(failure('next'));await new Promise(r=>setTimeout(r,10));config.mode='observe';await runtime.stop();assert.equal(store.listTickets().find(x=>x.event.id==='active').status,'interrupted');assert.equal(store.listTickets().find(x=>x.event.id==='next').status,'queued');});
+
+test('malformed events and dangerous ticket patches rejected',t=>{const {store}=fixture(t);assert.throws(()=>store.ingest({id:'a'}));const {ticket}=store.ingest(request('a'));assert.throws(()=>store.updateTicket(ticket.id,{id:'changed'}));assert.throws(()=>store.updateTicket(ticket.id,{status:'not-real'}));});
+
+test('paused retains queued authorized work; resume drain executes; manual intake supported',async t=>{const {store,dir}=fixture(t),config={mode:'paused',workspaceRoot:join(dir,'tickets')};let calls=0;const runtime=new Runtime({store,config,executor:{async execute(){calls++;return {text:'ok'}}}});const {ticket}=runtime.handleEvent({...request('manual'),source:'manual'});await runtime.drain();assert.equal(calls,0);assert.equal(store.getTicket(ticket.id).status,'queued');config.mode='observe';await runtime.drain();assert.equal(calls,1);assert.equal(store.metrics().succeeded,1);});
+
+test('cancel queued and active tickets without replay',async t=>{const {store,dir}=fixture(t),config={mode:'paused',workspaceRoot:join(dir,'tickets')};const runtime=new Runtime({store,config,executor:{execute({signal}){return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}}});const queued=runtime.handleEvent(request('queued')).ticket;await runtime.cancel(queued.id);assert.equal(store.getTicket(queued.id).status,'interrupted');const active=runtime.handleEvent(request('active')).ticket;config.mode='observe';runtime.drain();await new Promise(r=>setTimeout(r,10));await runtime.cancel(active.id);assert.equal(store.getTicket(active.id).status,'interrupted');assert.throws(()=>runtime.cancel('missing'),/Unknown/);});
+
+test('database private; proactive work cannot run without configured repository',async t=>{const {store,dir}=fixture(t);let calls=0;const runtime=new Runtime({store,config:{mode:'auto',workspaceRoot:join(dir,'tickets')},executor:{execute(){calls++;}}});const {ticket}=runtime.handleEvent(failure('a'));await runtime.drain();assert.equal(calls,0);assert.equal(store.getTicket(ticket.id).status,'failed');assert.match(store.getTicket(ticket.id).error,/repository/);});
+
+test('only completed CI failures queue; unstable stays observed by default',t=>{const {store}=fixture(t);assert.equal(store.ingest({...failure('running'),status:'running',lifecycle:'running'},{mode:'auto'}).ticket,undefined);assert.equal(store.ingest({...failure('unstable'),outcome:'unstable'},{mode:'auto'}).ticket.status,'observed');assert.equal(store.ingest({...failure('finished'),lifecycle:'completed'},{mode:'auto'}).ticket.status,'queued');});
+
+test('CI repository mismatch or unavailable revision never invokes executor',async t=>{
+  const {store,dir}=fixture(t),{execFileSync}=await import('node:child_process');
+  const repository=join(dir,'repo');execFileSync('git',['init',repository]);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-m','fixture']);execFileSync('git',['-C',repository,'remote','add','origin','git@github.com:example/right.git']);
+  const sha=execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim();let calls=0;
+  const runtime=new Runtime({store,config:{mode:'auto',workspaceRoot:join(dir,'tickets'),repositoryPath:repository},executor:{async execute(){calls++;return {text:'done'}}}});
+  const wrong=runtime.handleEvent({...failure('wrong'),scm:{certainty:'known',repository:'https://github.com/example/wrong',headSha:sha}}).ticket;
+  const unknown=runtime.handleEvent({...failure('unknown'),scm:{certainty:'known',repository:'https://github.com/example/right',headSha:'f'.repeat(40)}}).ticket;
+  await runtime.drain();assert.equal(calls,0);assert.equal(store.getTicket(wrong.id).status,'failed');assert.match(store.getTicket(wrong.id).error,/repository.*match/i);assert.match(store.getTicket(unknown.id).error,/commit.*available|revision/i);
+});
+
+test('CI repairs use exact revision in an isolated checkout and preserve source HEAD',async t=>{
+  const {store,dir}=fixture(t),{execFileSync}=await import('node:child_process'),{writeFileSync,readFileSync,statSync}=await import('node:fs');
+  const repository=join(dir,'repo');execFileSync('git',['init',repository]);
+  writeFileSync(join(repository,'target.txt'),'first');execFileSync('git',['-C',repository,'add','.']);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','first']);
+  const first=execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
+  writeFileSync(join(repository,'target.txt'),'second');execFileSync('git',['-C',repository,'add','.']);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','second']);execFileSync('git',['-C',repository,'remote','add','origin','git@github.com:example/right.git']);
+  const latest=execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
+  const runtime=new Runtime({store,config:{mode:'auto',workspaceRoot:join(dir,'tickets'),repositoryPath:repository},executor:{async execute({workspace,readRoots}){assert.equal(readFileSync(join(workspace,'target.txt'),'utf8'),'first');assert.equal(readRoots,undefined);writeFileSync(join(workspace,'target.txt'),'fixed');return {text:'fixed'}}}});
+  const {ticket}=runtime.handleEvent({...failure('known'),scm:{certainty:'known',repository:'https://github.com/example/right.git',headSha:first}});await runtime.drain();
+  assert.equal(store.getTicket(ticket.id).status,'succeeded');assert.equal(execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),latest);assert.equal(readFileSync(join(repository,'target.txt'),'utf8'),'second');assert.equal(statSync(join(dir,'state.sqlite')).mode&0o777,0o600);
+});
+
+test('isolated checkout never inherits source smudge/process filters or credentials',async t=>{
+  const {store,dir}=fixture(t),{execFileSync}=await import('node:child_process'),{writeFileSync}=await import('node:fs');
+  const repository=join(dir,'repo'),marker=join(dir,'outside-workspace');execFileSync('git',['init',repository]);
+  writeFileSync(join(repository,'.gitattributes'),'*.txt filter=evil\n');writeFileSync(join(repository,'target.txt'),'safe');execFileSync('git',['-C',repository,'add','.']);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','fixture']);execFileSync('git',['-C',repository,'config','filter.evil.smudge',`sh -c 'touch ${marker}; cat'`]);execFileSync('git',['-C',repository,'config','http.extraHeader','Authorization: fixture-credential']);
+  const runtime=new Runtime({store,config:{mode:'observe',workspaceRoot:join(dir,'tickets'),repositoryPath:repository},executor:{async execute({workspace}){const {readFileSync}=await import('node:fs');assert.doesNotMatch(readFileSync(join(workspace,'.git','config'),'utf8'),/fixture-credential|extraHeader|filter|remote/i);writeFileSync(join(workspace,'target.txt'),'changed');assert.match(execFileSync('git',['-C',workspace,'diff'],{encoding:'utf8'}),/changed/);return {text:'done'}}}});
+  const {ticket}=runtime.handleEvent(request('filter'));await runtime.drain();assert.equal(store.getTicket(ticket.id).status,'succeeded');assert.equal(existsSync(marker),false);
+});
+
+test('successful empty summary is not reported as interrupted',t=>{const {store}=fixture(t);const {ticket}=store.ingest(request('empty'));store.updateTicket(ticket.id,{status:'succeeded',result:''});assert.doesNotMatch(store.listOutbox()[0].text,/interrupted/i);assert.match(store.listOutbox()[0].text,/completed/i);});
