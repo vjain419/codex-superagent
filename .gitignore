@@ -2,4 +2,13 @@ node_modules/
 lib/
 .artifacts/
 .env
+.env.*
+!.env.example
 coverage/
+work/
+service/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.env
+!*.env.example
