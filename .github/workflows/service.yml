@@ -22,6 +22,8 @@ jobs:
         working-directory: service
       - run: npm test
         working-directory: service
+      - run: node --test deploy/test/*.test.mjs
+      - run: sh -n deploy/install-user-service.sh
       - run: node --check service/web/app.js
       - run: npm install --global --ignore-scripts @openai/codex@0.166.0
       - run: node service/test/protocol-smoke.mjs
