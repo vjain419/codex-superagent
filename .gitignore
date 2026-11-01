@@ -12,3 +12,5 @@ service/data/
 *.sqlite-wal
 *.env
 !*.env.example
+
+auth.json

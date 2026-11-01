@@ -17,7 +17,7 @@ Standalone Codex app-server fork of [`deepseek-ai/dsh-superagent-prototype`](htt
 
 Root product manager/integrator; Sol 6.1 High engineering; Terra Max bounded connector work; Luna High focused validation/docs. User authorizes tested commits, milestone PRs and merges to main. No production secrets in tracked files. Use installed TDD and pstack verification where relevant, and update this file when behavior changes.
 
-Milestone PRs: [foundation #1](https://github.com/vjain419/codex-superagent/pull/1), [Codex runtime #2](https://github.com/vjain419/codex-superagent/pull/2), [connectors/service/dashboard #3](https://github.com/vjain419/codex-superagent/pull/3). Deployment packaging/docs follows as the final release milestone.
+Milestone PRs: [foundation #1](https://github.com/vjain419/codex-superagent/pull/1), [Codex runtime #2](https://github.com/vjain419/codex-superagent/pull/2), [connectors/service/dashboard #3](https://github.com/vjain419/codex-superagent/pull/3). [deployment/release #4](https://github.com/vjain419/codex-superagent/pull/4) packages the release and records validation.
 
 ## Evidence and next live checks
 
