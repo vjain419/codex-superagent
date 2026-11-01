@@ -7,7 +7,8 @@ A standalone Codex app-server service for authorized repository work and CI moni
 ```text
 Slack @mentions ──┐                          ┌─ Codex app-server
 GitHub Actions ──┼─ allowlists → SQLite → policy → isolated ticket checkout
-Jenkins/CloudBees┘                          └─ durable replies → Slack
+Jenkins/CloudBees┤                          └─ durable replies → Slack
+Gerrit patchsets┘                            (Gerrit stays observed)
                                   authenticated operator dashboard
 ```
 
@@ -15,7 +16,8 @@ Jenkins/CloudBees┘                          └─ durable replies → Slack
 
 - Slack Socket Mode: explicit authorized mentions, allowlisted workspace/channel/users, durable intake deduplication and thread replies.
 - GitHub Actions and Jenkins/CloudBees: read-only API polling, per-run identities, initial historical baseline, terminal-state distinctions and visible coverage/errors. Polling itself uses no LLM.
-- Codex: isolated stdio process per task, verified restrictive permissions, dedicated Codex home, bounded execution and cancellation. No inherited Slack/Jenkins/GitHub token environment.
+- Gerrit: read-only, bounded patchset polling with historical baseline and deduplication; new patchsets appear as observed tickets even in auto mode. Generic local Git checkouts support HTTPS and SSH origins, including Gerrit ports.
+- Codex: isolated stdio process per task, verified restrictive permissions, dedicated Codex home, bounded execution and cancellation. No inherited integration-token environment.
 - Durable SQLite tickets, pause/observe/auto modes, interrupted-work recovery and retrying Slack outbox.
 - Authenticated dashboard: status, connection health, tickets and cancellation, configuration, token usage and explicitly estimated cost/value/ROI.
 - Docker Compose or native systemd deployment on one VM. Default one worker and observe mode.

@@ -6,13 +6,20 @@ const exec = promisify(execFile);
 const git = (repository,args) => exec('git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','protocol.allow=never','-C',repository,...args],{timeout:30000,maxBuffer:1024*1024,env:{PATH:process.env.PATH??'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0',GIT_NO_LAZY_FETCH:'1',GIT_LFS_SKIP_SMUDGE:'1'}});
 
 function remoteIdentity(value) {
-  if(typeof value!=='string')return null;
-  if(/^[^/\s]+@[^/:\s]+:.+/.test(value)) value=`ssh://${value.replace(':','/')}`;
+  if(typeof value!=='string' || /[\s\u0000-\u001f\u007f]/.test(value))return null;
+  if(!value.includes('://')) {
+    const scp=value.match(/^(?:([^@/:]+)@)?(\[[^\]]+\]|[^/:]+):(.+)$/);
+    if(!scp)return null;
+    value=`ssh://${scp[1]?`${scp[1]}@`:''}${scp[2]}/${scp[3].replace(/^\/+/, '')}`;
+  }
   try {
     const url=new URL(value);
-    if(!['https:','http:','ssh:','git:'].includes(url.protocol) || !url.hostname || ((url.protocol==='https:' || url.protocol==='http:') && (url.username || url.password)))return null;
+    if(!['https:','http:','ssh:','git:'].includes(url.protocol) || !url.hostname || url.password || url.search || url.hash || (url.protocol!=='ssh:' && url.username))return null;
     const path=url.pathname.replace(/\/+$/,'').replace(/\.git$/,'');
-    return `${url.host.toLowerCase()}${url.hostname.toLowerCase()==='github.com'?path.toLowerCase():path}`;
+    if(!path || path==='/')return null;
+    const defaults={'http:':'80','https:':'443','ssh:':'22','git:':'9418'};
+    const port=url.port && url.port!==defaults[url.protocol]?`:${url.port}`:'';
+    return `${url.hostname.toLowerCase()}${port}${url.hostname.toLowerCase()==='github.com'?path.toLowerCase():path}`;
   }catch{return null;}
 }
 
@@ -43,13 +50,13 @@ export class Runtime {
     if(this.config.repositoryPath) {
       const repository=await realpath(resolve(this.config.repositoryPath));
       let revision='HEAD';
-      if(ticket.proactive) {
+      if(ticket.proactive || ticket.event.scm!=null) {
         const scm=ticket.event.scm;
-        if(!scm || scm.certainty!=='known' || !remoteIdentity(scm.repository)) throw new Error('CI repository provenance is unknown; manual inspection required');
+        if(!scm || scm.certainty!=='known' || !remoteIdentity(scm.repository)) throw new Error('SCM repository provenance is unknown; manual inspection required');
         const origin=await git(repository,['remote','get-url','origin']);
-        if(remoteIdentity(origin.stdout.trim())!==remoteIdentity(scm.repository)) throw new Error('CI repository does not match configured checkout');
-        if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(scm.headSha??'')) throw new Error('CI revision is missing or invalid');
-        try { await git(repository,['cat-file','-e',`${scm.headSha}^{commit}`]); } catch {throw new Error('CI commit is not available locally; no automatic fetch performed');}
+        if(remoteIdentity(origin.stdout.trim())!==remoteIdentity(scm.repository)) throw new Error('SCM repository does not match configured checkout');
+        if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(scm.headSha??'')) throw new Error('SCM revision is missing or invalid');
+        try { await git(repository,['cat-file','-e',`${scm.headSha}^{commit}`]); } catch {throw new Error('SCM commit is not available locally; no automatic fetch performed');}
         revision=scm.headSha;
       }
       // Fresh metadata prevents repository credentials/configuration reaching the agent.
@@ -66,13 +73,16 @@ export class Runtime {
   async _run() {
     while(!this.stopped && this.config.mode!=='paused') {
       const ticket=this.store.nextQueued(); if(!ticket) break;
+      if(ticket.event.source==='gerrit') {
+        this.store.updateTicket(ticket.id,{status:'observed'}); continue;
+      }
       if(ticket.proactive && this.config.mode!=='auto') {
         this.store.updateTicket(ticket.id,{status:'observed'}); continue;
       }
       this.controller=new AbortController(); this.activeId=ticket.id;
       this.store.updateTicket(ticket.id,{status:'running',startedAt:new Date().toISOString()});
       try {
-        if(ticket.proactive && !this.config.repositoryPath) throw new Error('A configured repositoryPath is required for proactive CI work');
+        if((ticket.proactive || ticket.event.scm!=null) && !this.config.repositoryPath) throw new Error('A configured repositoryPath is required for SCM work');
         const workspace=await this._workspace(ticket);
         if(this.controller.signal.aborted) throw this.controller.signal.reason;
         this.store.updateTicket(ticket.id,{workspace});

@@ -23,7 +23,7 @@ if(command==='init') {
 } else {
   const config=loadConfig(file);
   if(command==='doctor') {
-    const checks={configuration:'valid',node:process.version,integrations:{github:config.github.length,jenkins:config.jenkins.length,slack:config.slack.enabled}};
+    const checks={configuration:'valid',node:process.version,integrations:{github:config.github.length,jenkins:config.jenkins.length,gerrit:(config.gerrit??[]).length,slack:config.slack.enabled}};
     try{resolveSecrets(config);checks.environment='ready';}catch(error){checks.environment=error.message;process.exitCode=1;}
     try{checks.codex=execFileSync(config.codexCommand,['--version'],{encoding:'utf8',timeout:5000}).trim();}catch{checks.codex='unavailable';process.exitCode=1;}
     checks.codexHome=existsSync(config.codexHome)?'exists; authentication not verified':'not initialized';

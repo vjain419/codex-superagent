@@ -17,7 +17,7 @@ export function credential(value) {
   return value;
 }
 
-export async function requestJson(fetchImpl, url, options = {}, timeoutMs = 15000) {
+export async function requestJson(fetchImpl, url, options = {}, timeoutMs = 15000, { xssi = false } = {}) {
   let response;
   try {
     response = await fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
@@ -47,7 +47,9 @@ export async function requestJson(fetchImpl, url, options = {}, timeoutMs = 1500
       if (size > maxBytes) { await reader.cancel(); throw new Error('response too large'); }
       chunks.push(value);
     }
-    return { body: JSON.parse(Buffer.concat(chunks).toString('utf8')), headers: response.headers };
+    let text = Buffer.concat(chunks).toString('utf8');
+    if (xssi) text = text.replace(/^\)\]\}'\r?\n/, '');
+    return { body: JSON.parse(text), headers: response.headers };
   } catch {
     throw new Error('invalid or oversized response');
   }

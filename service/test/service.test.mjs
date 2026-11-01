@@ -10,6 +10,30 @@ import {Monitor} from '../monitor.mjs';
 import {defaults} from '../config.mjs';
 import {createServer} from '../server.mjs';
 
+test('Gerrit baselines existing patchsets, records new patchsets once and survives outage and restart',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'superagent-gerrit-'));let store=new Store(join(dir,'state.sqlite'));
+  const config=defaults(dir);config.mode='auto';let revisions=1,broken=false;
+  const fetch=async()=>{
+    if(broken)throw new Error('unavailable');
+    const entries=Object.fromEntries(Array.from({length:revisions},(_,i)=>[(i+1).toString(16).repeat(40),{_number:i+1}]));
+    return new Response(")]}'\n"+JSON.stringify([{_number:42,project:'team/project',branch:'main',status:'NEW',subject:'Update',current_revision:revisions.toString(16).repeat(40),revisions:entries}]));
+  };
+  const secrets={github:[],jenkins:[],gerrit:[{id:'review',baseUrl:'https://gerrit.example.test',username:'reader',token:'fake',projects:['team/project']}]};
+  let runtime=new Runtime({store,config,executor:{execute(){assert.fail('review events cannot execute');}}});
+  let monitor=new Monitor({store,runtime,config,secrets,fetch});
+  try{
+    await monitor.tick();assert.equal(store.listTickets().length,0);
+    revisions=2;await monitor.tick();await runtime.drain();
+    assert.equal(store.listTickets().length,1);assert.equal(store.listTickets()[0].status,'observed');assert.equal(store.listTickets()[0].event.patchset,2);
+    broken=true;await monitor.tick();assert.ok(Object.values(monitor.health).some(health=>!health.healthy));
+    await runtime.stop();store.close();store=new Store(join(dir,'state.sqlite'));broken=false;
+    runtime=new Runtime({store,config,executor:{execute(){assert.fail('review events cannot execute');}}});
+    monitor=new Monitor({store,runtime,config,secrets,fetch});
+    await monitor.tick();assert.equal(store.listTickets().length,1);
+    revisions=3;await monitor.tick();await runtime.drain();assert.equal(store.listTickets().length,2);
+  }finally{await runtime.stop();store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
 test('CI baseline, new failure, provider outage and restart keep durable identities',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'superagent-monitor-'));let store=new Store(join(dir,'state.sqlite'));
   const config=defaults(dir);let number=1,broken=false;

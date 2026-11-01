@@ -40,20 +40,23 @@ export class Store {
     });
   }
   _ingest(event,mode) {
-    if(!event || typeof event.id!=='string' || !event.id || !['slack','ci','manual'].includes(event.source) || !['request','ci'].includes(event.kind)) throw new Error('Invalid event identity/source/kind');
+    if(!event || typeof event.id!=='string' || !event.id || !['slack','ci','manual','gerrit'].includes(event.source) || !['request','ci','review'].includes(event.kind)) throw new Error('Invalid event identity/source/kind');
     if(!['observe','auto','paused'].includes(mode)) throw new Error('Invalid acceptance mode');
+    if(event.source==='gerrit' && (event.kind!=='review' || typeof event.change!=='string' || !/^[1-9][0-9]{0,19}$/.test(event.change) || !Number.isSafeInteger(event.patchset) || event.patchset<1 || typeof event.project!=='string' || !event.project.trim() || event.project.length>1024 || /[\u0000-\u001f\u007f]/.test(event.project) || !['NEW','MERGED','ABANDONED'].includes(event.status))) throw new Error('Invalid Gerrit review identity');
     if(event.source==='ci' && event.kind!=='ci') throw new Error('CI event kind required');
     if(event.source==='ci' && (typeof event.job!=='string' || !event.job || event.build==null)) throw new Error('CI job/build required');
     if(event.text!=null && (typeof event.text!=='string' || event.text.length>200000)) throw new Error('Invalid event text');
     const key=JSON.stringify([event.source,event.id]), now=new Date().toISOString();
     const inserted=this.db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?)').run(key,JSON.stringify(event),now);
     if(!inserted.changes) return {duplicate:true,eventId:event.id,ticket:decode(this.db.prepare('SELECT data FROM tickets WHERE event_key=?').get(key))};
-    if(event.source==='ci') {
+    if(event.source==='gerrit') {
+      if(event.baseline) return {duplicate:false,eventId:event.id,baseline:true};
+    } else if(event.source==='ci') {
       this.db.prepare('INSERT OR IGNORE INTO ci_builds(job,build,baseline) VALUES(?,?,?)').run(event.job,String(event.build),event.baseline && failure(event)?1:0);
       const prior=this.db.prepare('SELECT * FROM ci_builds WHERE job=? AND build=?').get(event.job,String(event.build));
       if(event.baseline || prior.baseline || prior.ticket_id || !failure(event)) return {duplicate:false,eventId:event.id,baseline:!!event.baseline};
     } else if(event.authorized!==true || event.kind!=='request' || !event.text?.trim()) return {duplicate:false,eventId:event.id,rejected:true};
-    const status=event.source!=='ci' || (mode==='auto' && String(event.outcome??event.status).toLowerCase()!=='unstable') ? 'queued' : 'observed';
+    const status=event.source==='gerrit' ? 'observed' : event.source!=='ci' || (mode==='auto' && String(event.outcome??event.status).toLowerCase()!=='unstable') ? 'queued' : 'observed';
     const ticket={id:randomUUID(),event,status,proactive:event.source==='ci',createdAt:now,updatedAt:now,usage:{inputTokens:0,outputTokens:0,totalTokens:0}};
     this.db.prepare('INSERT INTO tickets VALUES(?,?,?,?,?)').run(ticket.id,key,status,JSON.stringify(ticket),now);
     if(event.source==='ci') this.db.prepare('UPDATE ci_builds SET ticket_id=? WHERE job=? AND build=?').run(ticket.id,event.job,String(event.build));

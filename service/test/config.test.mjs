@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { defaults, validateConfig, saveConfig, loadConfig, resolveSecrets } from '../config.mjs';
 
 test('defaults are safe and resolve local paths', () => {
@@ -10,7 +12,34 @@ test('defaults are safe and resolve local paths', () => {
   assert.equal(c.mode, 'observe');
   assert.equal(c.host, '127.0.0.1');
   assert.equal(c.slack.enabled, false);
+  assert.deepEqual(c.gerrit, []);
   assert.equal(validateConfig(c), c);
+});
+test('Gerrit uses explicit project allowlists and environment-backed credentials, while old config stays valid', () => {
+  const c=defaults('/tmp/superagent');
+  const gerrit={id:'review',baseUrl:'https://gerrit.example.test',usernameEnv:'GERRIT_USER',tokenEnv:'GERRIT_TOKEN',projects:['team/project']};
+  assert.equal(validateConfig({...c,gerrit:[gerrit]}).gerrit.length,1);
+  const old={...c};delete old.gerrit;
+  assert.equal(validateConfig(old),old);
+  const resolved=resolveSecrets({...c,gerrit:[gerrit]},{SUPERAGENT_ADMIN_TOKEN:'admin-test-token-123456789012345678',GERRIT_USER:'reader',GERRIT_TOKEN:'secret'});
+  assert.equal(resolved.gerrit[0].username,'reader');
+  assert.equal(resolved.gerrit[0].token,'secret');
+  assert.throws(()=>validateConfig({...c,gerrit:[{...gerrit,projects:['^team/.*']}]}),/project/);
+  assert.throws(()=>validateConfig({...c,gerrit:[{...gerrit,projects:[]}]}),/project/);
+  assert.throws(()=>validateConfig({...c,gerrit:[{...gerrit,maxPages:21}]}),/maxPages/);
+  assert.throws(()=>validateConfig({...c,gerrit:[{...gerrit,timeoutMs:99}]}),/timeoutMs/);
+});
+test('doctor reports configured Gerrit integration without printing credentials', () => {
+  const dir=mkdtempSync(join(tmpdir(),'superagent-doctor-'));
+  try {
+    const file=join(dir,'config.json'),c=defaults(dir);
+    c.codexCommand=process.execPath;
+    c.gerrit=[{id:'review',baseUrl:'https://gerrit.example.test',usernameEnv:'GERRIT_USER',tokenEnv:'GERRIT_TOKEN',projects:['team/project']}];
+    saveConfig(file,c);
+    const output=execFileSync(process.execPath,[fileURLToPath(new URL('../main.mjs',import.meta.url)),'doctor'],{encoding:'utf8',env:{...process.env,SUPERAGENT_CONFIG:file,SUPERAGENT_ADMIN_TOKEN:'admin-test-token-123456789012345678',GERRIT_USER:'reader',GERRIT_TOKEN:'private-test-token'}});
+    assert.equal(JSON.parse(output).integrations.gerrit,1);
+    assert.doesNotMatch(output,/private-test-token/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
 });
 test('rejects executable paths from web configuration and malformed provider URLs', () => {
   const c = defaults('/tmp/superagent');

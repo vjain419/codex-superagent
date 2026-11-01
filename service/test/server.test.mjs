@@ -68,6 +68,31 @@ test('mode-only saves preserve provider settings awaiting service restart',async
     assert.deepEqual((await savedConfig.json()).github,github);
   }finally{await new Promise(resolve=>server.close(resolve));}
 });
+test('Gerrit project monitoring can be configured through the dashboard API',async()=>{
+  const config=defaults('/tmp/test'),updates=[];
+  const server=createServer({store,config,adminToken:token,updateConfig:async(next,options)=>updates.push({next,options})});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const gerrit=[{id:'review',baseUrl:'https://gerrit.example.test',usernameEnv:'GERRIT_USER',tokenEnv:'GERRIT_TOKEN',projects:['team/project']}];
+    const response=await fetch(`http://127.0.0.1:${server.address().port}/api/config`,{method:'PUT',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({gerrit})});
+    assert.deepEqual(await response.json(),{saved:true,restartRequired:true});
+    assert.deepEqual(updates[0].next.gerrit,gerrit);
+    const app=await fetch(`http://127.0.0.1:${server.address().port}/app.js`);
+    assert.match(await app.text(),/'gerrit'/);
+  }finally{await new Promise(resolve=>server.close(resolve));}
+});
+test('older configs expose an empty Gerrit list without requiring a restart when saved',async()=>{
+  const config=defaults('/tmp/test');delete config.gerrit;
+  const server=createServer({store,config,adminToken:token,updateConfig:async()=>{}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const base=`http://127.0.0.1:${server.address().port}`,auth={authorization:`Bearer ${token}`};
+    const saved=await (await fetch(base+'/api/config',{headers:auth})).json();
+    assert.deepEqual(saved.gerrit,[]);
+    const response=await fetch(base+'/api/config',{method:'PUT',headers:{...auth,'content-type':'application/json'},body:JSON.stringify({gerrit:saved.gerrit})});
+    assert.deepEqual(await response.json(),{saved:true,restartRequired:false});
+  }finally{await new Promise(resolve=>server.close(resolve));}
+});
 test('malformed encoded ticket IDs remain a client error',async()=>{
   const server=createServer({store,config:defaults('/tmp/test'),adminToken:token});
   server.listen(0,'127.0.0.1'); await once(server,'listening');

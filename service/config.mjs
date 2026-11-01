@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { validGerritProject } from './connectors/gerrit.mjs';
 
 export function defaults(root = resolve('data')) {
   return {
@@ -8,7 +9,7 @@ export function defaults(root = resolve('data')) {
     mode: 'observe', pollSeconds: 60, workspaceRoot: resolve(root, 'workspaces'),
     repositoryPath: null, codexHome: resolve(root, 'codex'), codexCommand: 'codex',
     model: 'gpt-6.1-sol', effort: 'high', turnTimeoutMs: 900000, maxConcurrent: 1,
-    github: [], jenkins: [],
+    github: [], jenkins: [], gerrit: [],
     slack: { enabled: false, appTokenEnv: 'SLACK_APP_TOKEN', botTokenEnv: 'SLACK_BOT_TOKEN', teamId: '', botUserId: '', channelIds: [], userIds: [] },
     economics: { currency: 'USD', inputPerMillion: null, cachedInputPerMillion: null, outputPerMillion: null, hourlyRate: null, savedMinutesPerSuccess: null, fixedCost: 0 },
   };
@@ -41,14 +42,20 @@ export function validateConfig(c) {
   requireValue(c.maxConcurrent === 1, 'this release supports one worker');
   requireValue(Number.isInteger(c.turnTimeoutMs) && c.turnTimeoutMs >= 1000 && c.turnTimeoutMs <= 3600000, 'turn timeout must be 1 second–1 hour');
   const ids=new Set();
-  for (const kind of ['github','jenkins']) {
-    requireValue(Array.isArray(c[kind]) && c[kind].length <= 50, `${kind} must be a bounded array`);
-    for (const p of c[kind]) {
-      keys(p, kind === 'github' ? ['id','baseUrl','tokenEnv','repositories','maxPages','perPage','timeoutMs'] : ['id','baseUrl','usernameEnv','tokenEnv','jobs','maxBuilds','timeoutMs'], kind);
+  for (const kind of ['github','jenkins','gerrit']) {
+    const providers = kind === 'gerrit' && c[kind] === undefined ? [] : c[kind];
+    requireValue(Array.isArray(providers) && providers.length <= 50, `${kind} must be a bounded array`);
+    for (const p of providers) {
+      keys(p, kind === 'github' ? ['id','baseUrl','tokenEnv','repositories','maxPages','perPage','timeoutMs'] : kind === 'jenkins' ? ['id','baseUrl','usernameEnv','tokenEnv','jobs','maxBuilds','timeoutMs'] : ['id','baseUrl','usernameEnv','tokenEnv','projects','maxPages','perPage','timeoutMs'], kind);
       requireValue(typeof p.id === 'string' && /^[\w-]{1,80}$/.test(p.id) && !ids.has(p.id), 'provider IDs must be unique'); ids.add(p.id);
       requireValue(url(p.baseUrl), 'provider baseUrl requires HTTPS without credentials/query/fragment');
       requireValue(envName(p.tokenEnv), 'tokenEnv must name an environment variable');
-      if (kind === 'jenkins') {
+      if (kind === 'gerrit') {
+        requireValue(envName(p.usernameEnv), 'usernameEnv must name an environment variable');
+        requireValue(Array.isArray(p.projects) && p.projects.length > 0 && p.projects.length <= 50 && p.projects.every(validGerritProject), 'projects must be explicitly configured');
+        if (p.maxPages !== undefined) requireValue(Number.isInteger(p.maxPages) && p.maxPages >= 1 && p.maxPages <= 20, 'invalid maxPages');
+        if (p.timeoutMs !== undefined) requireValue(Number.isInteger(p.timeoutMs) && p.timeoutMs >= 100 && p.timeoutMs <= 60000, 'invalid timeoutMs');
+      } else if (kind === 'jenkins') {
         requireValue(envName(p.usernameEnv), 'usernameEnv must name an environment variable');
         requireValue(strings(p.jobs) && p.jobs.length > 0 && p.jobs.length <= 50, 'jobs must be explicitly configured');
       } else {
@@ -88,5 +95,6 @@ export function resolveSecrets(c, env=process.env) {
     slack: c.slack.enabled ? {...c.slack,appToken:secret(c.slack.appTokenEnv),botToken:secret(c.slack.botTokenEnv)} : null,
     github:c.github.map(p=>({...p,token:secret(p.tokenEnv)})),
     jenkins:c.jenkins.map(p=>({...p,username:secret(p.usernameEnv),token:secret(p.tokenEnv)})),
+    gerrit:(c.gerrit??[]).map(p=>({...p,username:secret(p.usernameEnv),token:secret(p.tokenEnv)})),
   };
 }
