@@ -1,0 +1,22 @@
+[Unit]
+Description=Codex Superagent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/codex-superagent/service
+Environment=SUPERAGENT_CONFIG=/var/lib/codex-superagent/config.json
+EnvironmentFile=/var/lib/codex-superagent/service.env
+ExecStart=/usr/bin/node /opt/codex-superagent/service/main.mjs
+User=superagent
+Group=superagent
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

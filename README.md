@@ -1,39 +1,50 @@
-# dsh-superagent
+# Codex Superagent
 
-> **Research prototype for reference only, not an official DeepSeek product.** This code grew out of our team's day-to-day development work, with much of the engineering done by coding agents. Treat it as research code, not production-ready software. It may still contain bugs, and its coding style and engineering practices may be inconsistent. Review and adapt it before using it in your own environment.
->
-> We have adapted it for publication, so it is not identical to our internal version or the implementation described in *Exploring Super-agent Design: Towards a More Autonomous Agent System*. Some designs discussed in the article are directions for future development and are not implemented in this prototype.
+A standalone Codex app-server service for authorized repository work and CI monitoring. Fork of [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype), preserving upstream MIT license and history.
 
-dsh-superagent is a proactive coding agent for one GitHub repository, packaged as a bundle for [DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When someone allowed asks the agent for work, it opens a work item, works on it in its own agent session and directory, and answers in the original conversation, for example with a pull request. A web panel shows what needs a person.
+**Start with [VM deployment and connection setup](deploy/README.md).** The new service lives in `service/`; the original DSH bundle remains in `src/` with [its original README](README.upstream.md). Installing the new service does not install or start DeepSeek Harness. This is a first runnable release, not feature parity with the upstream bundle.
 
-It is also a way of working with an agent: **take as little human attention as possible, and give as much value as possible.** An agent that can act for a whole team can also waste a whole team's attention, so it acts only when asked or when a rule the team wrote allows it, and speaks only when someone must act or can use a result. [docs/000-philosophy.md](docs/000-philosophy.md) explains the principle and what it asks of the operator.
+```text
+Slack @mentions ──┐                          ┌─ Codex app-server
+GitHub Actions ──┼─ allowlists → SQLite → policy → isolated ticket checkout
+Jenkins/CloudBees┘                          └─ durable replies → Slack
+                                  authenticated operator dashboard
+```
 
-## Setup
+## What works
 
-Setup has many steps, so an agent does it with you. Ask your coding agent:
+- Slack Socket Mode: explicit authorized mentions, allowlisted workspace/channel/users, durable intake deduplication and thread replies.
+- GitHub Actions and Jenkins/CloudBees: read-only API polling, per-run identities, initial historical baseline, terminal-state distinctions and visible coverage/errors. Polling itself uses no LLM.
+- Codex: isolated stdio process per task, verified restrictive permissions, dedicated Codex home, bounded execution and cancellation. No inherited Slack/Jenkins/GitHub token environment.
+- Durable SQLite tickets, pause/observe/auto modes, interrupted-work recovery and retrying Slack outbox.
+- Authenticated dashboard: status, connection health, tickets and cancellation, configuration, token usage and explicitly estimated cost/value/ROI.
+- Docker Compose or native systemd deployment on one VM. Default one worker and observe mode.
 
-> Read SETUP.md in this repository and set up dsh-superagent with me.
+## Develop and verify
 
-It asks one short question at a time, shows the full plan once, and then installs and configures everything. [SETUP.md](SETUP.md) is what it follows.
+Requires Node 24+; no DSH dependencies are needed for the new service.
 
-## Documentation
+```sh
+cd service
+npm ci --ignore-scripts
+npm test
+node test/protocol-smoke.mjs   # requires installed Codex; no model turn is sent
+node main.mjs init
+node --env-file=data/service.env main.mjs
+```
 
-Read the numbered documents in order; each builds only on the ones before it.
+Open `http://127.0.0.1:3082`, using the admin token generated in private `service/data/service.env`. Configure a dedicated Codex home/account before requesting model work. State and secrets are ignored by Git. See [deployment instructions](deploy/README.md) for Slack, API tokens, repository selection and network requirements.
 
-- [000 Philosophy](docs/000-philosophy.md)
-- [001 Domain model](docs/001-domain.md)
-- [002 Authorization](docs/002-authorization.md)
-- [003 Execution](docs/003-execution.md)
-- [004 Prompts](docs/004-prompts.md)
-- [005 Panel](docs/005-panel.md)
-- [006 Deployment](docs/006-deployment.md): manual setup, configuration, upgrades and troubleshooting
-- [007 Architecture](docs/007-architecture.md)
-- [008 Cookbook](docs/008-cookbook.md): adding a Source
+## Intentional first-release boundaries
 
-## Development
+- CI monitoring covers a configurable recent window. Coverage warnings are visible; it is not a lossless event archive. No webhook listener or CI build mutations.
+- Automatic CI repair requires verified repository identity and a matching local commit. Jenkins metadata currently lacks complete historical repository provenance, so automatic repair fails closed; observation and explicit investigation remain available.
+- One configured local repository, one worker, fresh Codex thread per ticket. Slack followups create new tickets, not resumed Codex conversations. Mention the bot on followups with the minimal Slack manifest.
+- Provider adapters currently collect build metadata, not full console logs, artifacts or test reports. Supply relevant bounded evidence in an explicit task when needed.
+- No automatic pushes, PR creation or merges by the deployed agent. Results remain local for review. The development PR workflow for this fork is separate.
+- No SSO, multi-tenancy, retention scheduler, cross-provider mirrored-run correlation or verified-fix tracking. Completed turns are not proof of repaired CI.
+- Integration credentials and the live VM must be provided by the operator. [Verification evidence](docs/fork/verification.md) distinguishes fixture checks from real connections.
 
-`pnpm check` runs the typecheck, the tests and the build.
+## Project records
 
-## License
-
-[MIT](LICENSE)
+[Implementation plan](docs/fork/plan.md) · [Current context](context.md) · [Engineering skills](docs/skills.md) · [Agent conventions](AGENTS.md)

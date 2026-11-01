@@ -15,9 +15,9 @@ The Matt Pocock TDD skill is the main red-green reference. It includes `tests.md
 
 ## pstack
 
-17 focused skills copied from [`backnotprop/pstack`](https://github.com/backnotprop/pstack) at commit [`25abb38559ddbabec563646224d09eff9a250eca`](https://github.com/backnotprop/pstack/commit/25abb38559ddbabec563646224d09eff9a250eca):
+18 focused skills copied from [`backnotprop/pstack`](https://github.com/backnotprop/pstack) at commit [`25abb38559ddbabec563646224d09eff9a250eca`](https://github.com/backnotprop/pstack/commit/25abb38559ddbabec563646224d09eff9a250eca):
 
-`benchmark-checklist`, `principle-boundary-discipline`, `principle-build-the-lever`, `principle-encode-lessons-in-structure`, `principle-fix-root-causes`, `principle-guard-the-context-window`, `principle-model-the-domain`, `principle-outcome-oriented-execution`, `principle-prove-it-works`, `principle-sequence-verifiable-units`, `principle-subtract-before-you-add`, `principle-test-behavior-not-implementation`, `principle-type-system-discipline`, `show-me-your-work`, `pstack-tdd`, `typescript-best-practices`, and `unslop`.
+`benchmark-checklist`, `principle-boundary-discipline`, `principle-build-the-lever`, `principle-encode-lessons-in-structure`, `principle-fix-root-causes`, `principle-guard-the-context-window`, `principle-laziness-protocol`, `principle-model-the-domain`, `principle-outcome-oriented-execution`, `principle-prove-it-works`, `principle-sequence-verifiable-units`, `principle-subtract-before-you-add`, `principle-test-behavior-not-implementation`, `principle-type-system-discipline`, `show-me-your-work`, `pstack-tdd`, `typescript-best-practices`, and `unslop`.
 
 `pstack-tdd` is the source skill `skills/tdd`, renamed to avoid colliding with Matt Pocock's `tdd` skill. The subset focuses on implementation, bug repair, testing, and verification.
 
