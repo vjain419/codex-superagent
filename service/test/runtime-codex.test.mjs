@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync,writeFileSync,mkdirSync,rmSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,mkdirSync,rmSync,statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexExecutor } from '../codex/executor.mjs';
@@ -35,3 +35,5 @@ test('cancellation interrupts the child',async t=>{const f=fixture(t,'hang'),con
 test('isolated codex home required',()=>assert.throws(()=>new CodexExecutor({}),/codexHome/));
 
 test('completion before turn-start response and child exit cannot hang',async t=>{const f=fixture(t,'early');let timer;const deadline=new Promise(resolve=>{timer=setTimeout(()=>resolve({text:'HUNG'}),250)});try {const result=await Promise.race([f.executor.execute({id:'t1',prompt:'Fix',workspace:f.workspace}),deadline]);assert.equal(result.text,'Done');}finally{clearTimeout(timer);}});
+
+test('denied workspace paths exist as directories before sandbox preparation',async t=>{const f=fixture(t);await f.executor.execute({id:'t1',prompt:'Fix',workspace:f.workspace});for(const name of ['.aws','.codex'])assert.equal(statSync(join(f.workspace,name)).isDirectory(),true);});
