@@ -21,7 +21,9 @@ test('generated unit preserves literal paths with spaces and percent specifiers'
   if(process.platform==='linux' && spawnSync('systemd-analyze',['--version']).status===0){
     const file=join(root,'codex-superagent.service');writeFileSync(file,unit);
     const checked=spawnSync('systemd-analyze',['verify',file],{encoding:'utf8'});
-    assert.equal(checked.status,0,checked.stderr);assert.equal(checked.stderr.trim(),'');
+    assert.equal(checked.status,0,checked.stderr);
+    // The host may emit warnings about unrelated installed units.
+    assert.doesNotMatch(checked.stderr,/codex-superagent\.service/,checked.stderr);
   } else t.diagnostic('systemd-analyze unavailable; Linux CI verifies the generated unit');
 });
 
