@@ -8,8 +8,14 @@ This repository is a research fork based on [`deepseek-ai/dsh-superagent-prototy
 - Apply `.agents/skills/karpathy-guidelines/SKILL.md` for surgical, goal-driven changes. User instructions and this file's no-pause workflow govern over skill text that suggests waiting for approval or confirmation.
 - Use `.agents/skills/tdd/SKILL.md` for red-green, one behavior seam at a time. Choose the narrowest observable public behavior seam from the task and existing interfaces; do not pause for a separate seam approval. Use `.agents/skills/pstack-tdd/SKILL.md` for focused bug regression work where a cheap executable reproduction exists.
 - Read `context.md` before changes that depend on project vocabulary or architecture. Keep it accurate when code changes alter those concepts.
-- Keep secrets out of tracked files, logs, and docs. Use placeholders and secure retrieval instructions.
-- Keep private company identifiers, internal hosts, VM addresses, project paths, integration identifiers and deployment logs outside this public checkout. Use synthetic examples in code, tests, docs, commit messages and PRs; review the full staged diff, author/committer metadata and publication text before pushing. Use a public Git identity and no-reply email for this repository.
+
+## Privacy before publication
+
+- Keep secrets, employer names, work email addresses, internal usernames, hosts, VM addresses, project paths, integration identifiers and deployment logs outside this public checkout. Use synthetic examples and environment-variable references in tracked files, documentation, screenshots, commit messages and PRs. Store operational records privately outside the repository.
+- For every commit you create here, use Git name `vjain419` and email `6880446+vjain419@users.noreply.github.com` for both author and committer. Never use a company/work email. Set identity with repository-local Git configuration; do not change global settings or copy identity from the host account.
+- Before each commit, inspect `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`. Both must match the public identity above; environment variables can override Git configuration. Correct any mismatch before committing. Preserve existing upstream authorship.
+- Before every push or PR, review the staged/outgoing file changes and publication text for private information. Inspect author and committer names/emails and messages for every outgoing commit you created, including amendments, cherry-picks and merges; checking file contents alone is insufficient. Publish only after both content and metadata pass.
+- If private information is found, stop publication and remove it from unpublished changes/commits. If already published, report the exposure privately and coordinate cleanup; never repeat the private value in a public issue or PR, and never claim that rewriting branch history removes cached commits, PR references or other clones.
 
 ## Model preferences
 
