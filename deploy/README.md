@@ -2,6 +2,8 @@
 
 Use a dedicated Linux VM/account. No cloud account or VM is provisioned by this repository. Requirements: Docker Engine with Compose, or Node 24+ and Codex CLI 0.166.0 for native systemd. State, tokens and worktrees belong to the VM, never the repository. The standalone service does not install or start DeepSeek Harness.
 
+This is a public repository. Keep private company identifiers, VM addresses, internal repository/controller URLs, channel/user identifiers, project paths and deployment logs in private operator storage outside the checkout. Public examples, issues, commits and PRs must use synthetic values.
+
 ## Recommended: native VM service
 
 On a dedicated Linux VM account, install Node 24+ and Codex CLI 0.166.0 through your approved package source. Clone this repository, then run:
@@ -11,6 +13,8 @@ On a dedicated Linux VM account, install Node 24+ and Codex CLI 0.166.0 through 
 ```
 
 The installer checks the real Codex permission profile without sending a model turn, installs locked service dependencies, initializes private state, and starts a systemd user service. It refuses to proceed when the sandbox check fails. The state directory defaults to `$XDG_STATE_HOME/codex-superagent` or `~/.local/state/codex-superagent`; override with `SUPERAGENT_STATE_DIR`. Your VM may require an administrator to enable user lingering (`loginctl enable-linger USER`) to keep it running after logout. Use `systemctl --user status codex-superagent` and `journalctl --user -u codex-superagent`. Supply credentials and dedicated Codex authentication as described below.
+
+Check `findmnt -T /PATH/TO/STATE` before installation. Live SQLite state and its instance lock require a durable local filesystem; NFS/SMB homes or project shares are unsupported. Use `SUPERAGENT_STATE_DIR` to select private local storage, outside temporary-directory cleanup. Source code can live on a project share. Stop the service before copying its state to a network share for backup; never copy a live database and WAL independently. See [SQLite WAL requirements](https://www.sqlite.org/wal.html).
 
 ## Optional container path
 
@@ -54,7 +58,15 @@ Adapt `superagent.service.example` to the actual Node executable and installatio
 
 ## Connect Slack
 
-Create an app from `slack-manifest.json`, install it to a test workspace, enable Socket Mode, and create an app-level token with `connections:write`. Put `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` in the private environment file. In the dashboard configuration set `slack.enabled=true`, exact `teamId`, `botUserId`, `channelIds`, and `userIds`. Invite the bot to the chosen channel. Restart, then send an explicit `@Codex Superagent` task. Mention again for followups with the minimal manifest; broader message subscriptions are not enabled by default.
+The repository already includes [`slack-manifest.json`](slack-manifest.json). A dedicated app/bot keeps permissions and credentials separate from other apps. An existing app can work if its owner adds the required scopes, event subscription and Socket Mode settings; reinstall after scope changes.
+
+1. In [Slack app management](https://api.slack.com/apps), choose **Create New App → From a manifest** and paste the JSON manifest. Select a test workspace and follow its app-approval policy. The manifest enables Socket Mode, `app_mention` events and bot scopes `app_mentions:read` + `chat:write`.
+2. Under **Basic Information → App-Level Tokens**, generate an app token with `connections:write`. Store it as `SLACK_APP_TOKEN` in the private VM environment file. This app-token scope is separate from the manifest's bot scopes.
+3. Install the app to the workspace. Store the **Bot User OAuth Token** as `SLACK_BOT_TOKEN` in that same private file; never paste either token into dashboard JSON, issues or chat.
+4. Set `slack.enabled=true`, exact `teamId`, `botUserId`, `channelIds`, and `userIds` in the dashboard configuration. `botUserId` is the bot's user ID, not the app ID; Slack's authenticated `auth.test` response supplies `team_id` and `user_id`. Invite the bot to the allowlisted channel.
+5. Restart the service, check Slack connection health, then send an explicit `@Codex Superagent` task from an allowlisted user. Codex authentication and a trusted repository must also be configured before code tasks can succeed.
+
+Mention the bot again for followups with the minimal manifest; broader message subscriptions are not enabled by default. Manifest creation/update behavior: [Slack documentation](https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests/).
 
 No webhook listener is required. Outbound access is required to Slack HTTPS/WebSocket endpoints. Terminal ticket results go through a durable retrying outbox. Network ambiguity can cause duplicate Slack delivery (at-least-once delivery); ticket IDs in messages make it identifiable. CI completion notifications use the first allowlisted Slack channel.
 
@@ -96,6 +108,37 @@ Create a fine-grained token for explicitly selected repositories with Actions re
 ```
 
 `workflows` can narrow monitoring to workflow IDs or filenames. GitHub Enterprise uses its API base URL. Rate limits/authentication errors appear as degraded health, never successful recovery. A GitHub check that mirrors Jenkins is not automatically correlated in this release; configure one authoritative monitor to avoid duplicate tickets.
+
+## Connect Gerrit
+
+Use a read-only Gerrit account with visibility only into the intended projects and an HTTP credential accepted by the controller's authenticated REST API. Store its username and HTTP token/password privately in the named environment variables. This adapter uses HTTPS Basic authentication against `/a/changes/`; browser SSO cookies and SSH keys are not REST credentials.
+
+```json
+{
+  "gerrit": [{
+    "id": "code-review",
+    "baseUrl": "https://gerrit.example.test/",
+    "usernameEnv": "GERRIT_USER",
+    "tokenEnv": "GERRIT_HTTP_TOKEN",
+    "projects": ["team/project"],
+    "maxPages": 3,
+    "perPage": 30,
+    "timeoutMs": 15000
+  }]
+}
+```
+
+Set the exact project names in dashboard configuration, save, then restart the service. The reader handles Gerrit's JSON prefix, queries recent changes with `ALL_REVISIONS`, baselines the initial snapshot and records newly seen patchsets as **observed** tickets. These remain observed even in `auto` mode. Project, change number, patchset number, commit SHA and status at observation are visible in ticket details. Polling is deterministic and does not call a model.
+
+This is bounded patchset monitoring, not a complete review-status feed: a status-only transition for an already seen patchset does not create a new ticket or refresh that ticket's original status. Changes outside the configured window can be missed. The adapter does not fetch diffs/comments, vote, post reviews, push or submit changes. Its project name alone does not prove the trusted local Git remote, so observed patchsets do not trigger automatic checkouts. See [Gerrit REST authentication](https://gerrit-review.googlesource.com/Documentation/rest-api.html#authentication) and [change queries](https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#list-changes).
+
+## Use a generic Git repository or Gerrit patchset
+
+The worker supports a trusted local Git checkout independently of GitHub. Clone/fetch it using an operator-managed read credential and set the private VM `repositoryPath`. HTTPS, SSH URLs and scp-style remote identities are recognized; nondefault SSH ports remain significant. Remote credentials and SSH keys stay outside task checkouts. No automatic clone/fetch from a remote is performed by the worker.
+
+For an explicit Gerrit review, use a dedicated staging checkout. Pause new work, wait for any active task to finish, verify the change and patchset in Gerrit, then fetch its exact `refs/changes/...` ref with your approved Git workflow. Check out the verified full commit SHA in that staging checkout. Resume and submit an explicit Slack/UI task; text-only tasks use the configured repository's committed `HEAD`. Include the trusted base SHA and desired review scope in the request. Uncommitted changes are not copied into the task checkout. Keep the staging checkout stable while a task is being accepted.
+
+Each task gets a sanitized local clone retained for inspection. Publishing a patch back to Gerrit (`refs/for/...`), updating review labels and submitting remain operator actions. Monitoring Gerrit plus Jenkins does not automatically correlate change numbers to builds in this release.
 
 ## Operating modes, economics and backup
 

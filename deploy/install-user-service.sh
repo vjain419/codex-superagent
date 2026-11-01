@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
+umask 077
 [ "$(uname -s)" = Linux ] || { echo 'Run this installer on your Linux VM.' >&2; exit 1; }
 command -v systemctl >/dev/null
+command -v systemd-analyze >/dev/null
 command -v node >/dev/null
 command -v npm >/dev/null
 command -v codex >/dev/null
@@ -23,14 +25,12 @@ config.codexCommand=process.argv[2];saveConfig(process.env.SUPERAGENT_CONFIG,con
 JS
 unit_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 mkdir -p "$unit_dir"
-node --input-type=module - "$repo_dir/service" "$state_dir" "$node_bin" "$unit_dir/codex-superagent.service" <<'JS'
-import {writeFileSync} from 'node:fs';
-const [service,state,node,file]=process.argv.slice(2);
-const q=value=>JSON.stringify(value.replaceAll('%','%%'));
-const path=[node.slice(0,node.lastIndexOf('/')),'/usr/local/bin','/usr/bin','/bin'].join(':');
-const unit=`[Unit]\nDescription=Codex Superagent\nAfter=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${q(service)}\nEnvironment=${q('SUPERAGENT_CONFIG='+state+'/config.json')}\nEnvironmentFile=${q(state+'/service.env')}\nEnvironment=${q('PATH='+path)}\nExecStart=${q(node)} ${q(service+'/main.mjs')}\nUMask=0077\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=45\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n`;
-writeFileSync(file,unit,{mode:0o600});
-JS
+unit_temp=$(mktemp --suffix=.service "$unit_dir/codex-superagent-XXXXXX")
+trap 'rm -f "$unit_temp"' 0
+node "$repo_dir/deploy/user-unit.mjs" "$repo_dir/service" "$state_dir" "$node_bin" > "$unit_temp"
+systemd-analyze --user verify "$unit_temp"
+mv -f -- "$unit_temp" "$unit_dir/codex-superagent.service"
+
 systemctl --user daemon-reload
 systemctl --user enable --now codex-superagent
 systemctl --user is-active codex-superagent

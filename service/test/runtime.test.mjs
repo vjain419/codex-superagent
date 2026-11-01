@@ -61,3 +61,31 @@ test('isolated checkout never inherits source smudge/process filters or credenti
 });
 
 test('successful empty summary is not reported as interrupted',t=>{const {store}=fixture(t);const {ticket}=store.ingest(request('empty'));store.updateTicket(ticket.id,{status:'succeeded',result:''});assert.doesNotMatch(store.listOutbox()[0].text,/interrupted/i);assert.match(store.listOutbox()[0].text,/completed/i);});
+
+test('Gerrit revisions are deduplicated observations, never authorized execution',async t=>{
+  const {store,dir}=fixture(t);let calls=0;
+  const runtime=new Runtime({store,config:{mode:'auto',workspaceRoot:join(dir,'tickets')},executor:{async execute(){calls++;return {text:'unexpected'}}}});
+  const event={id:'gerrit:change-7:2',source:'gerrit',kind:'review',change:'7',patchset:2,project:'example/app',status:'NEW',text:'Review patchset 2',authorized:true};
+  runtime.handleEvents([{...event,id:'gerrit:change-7:1',patchset:1}],{sourceKey:'review',baseline:true});assert.equal(store.listTickets().length,0);
+  const first=runtime.handleEvent(event);assert.equal(first.ticket.status,'observed');assert.equal(runtime.handleEvent(event).duplicate,true);
+  store.updateTicket(first.ticket.id,{status:'queued'});await runtime.drain();assert.equal(calls,0);assert.equal(store.getTicket(first.ticket.id).status,'observed');assert.equal(store.listOutbox().length,0);
+  for(const patch of [{patchset:0},{change:''},{project:''},{kind:'request'}])assert.throws(()=>store.ingest({...event,id:JSON.stringify(patch),...patch}));
+});
+
+test('explicit SCM task pins a staged revision through equivalent generic SSH remotes',async t=>{
+  const {store,dir}=fixture(t),{execFileSync}=await import('node:child_process'),{writeFileSync,readFileSync}=await import('node:fs');
+  const repository=join(dir,'repo');execFileSync('git',['init',repository]);writeFileSync(join(repository,'target.txt'),'staged');execFileSync('git',['-C',repository,'add','.']);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','staged']);
+  const revision=execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim();writeFileSync(join(repository,'target.txt'),'latest');execFileSync('git',['-C',repository,'add','.']);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','latest']);execFileSync('git',['-C',repository,'remote','add','origin','ssh://git@git.example.test:22/team/app.git']);
+  const runtime=new Runtime({store,config:{mode:'observe',workspaceRoot:join(dir,'tickets'),repositoryPath:repository},executor:{async execute({workspace}){assert.equal(readFileSync(join(workspace,'target.txt'),'utf8'),'staged');return {text:'Reviewed staged revision'}}}});
+  const {ticket}=runtime.handleEvent({...request('review-task'),source:'manual',scm:{certainty:'known',repository:'git@git.example.test:team/app.git',headSha:revision}});await runtime.drain();assert.equal(store.getTicket(ticket.id).status,'succeeded');
+});
+
+test('explicit SCM metadata cannot select another repository, SSH service or unstaged revision',async t=>{
+  const {store,dir}=fixture(t),{execFileSync}=await import('node:child_process');
+  const repository=join(dir,'repo');execFileSync('git',['init',repository]);execFileSync('git',['-C',repository,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-m','fixture']);execFileSync('git',['-C',repository,'remote','add','origin','ssh://git@review.example.test:29418/example/app']);
+  const revision=execFileSync('git',['-C',repository,'rev-parse','HEAD'],{encoding:'utf8'}).trim();let calls=0;
+  const runtime=new Runtime({store,config:{mode:'observe',workspaceRoot:join(dir,'tickets'),repositoryPath:repository},executor:{async execute(){calls++;return {text:'unexpected'}}}});
+  const known={certainty:'known',repository:'ssh://git@review.example.test:29418/example/app',headSha:revision};
+  for(const [index,patch] of [{repository:'ssh://git@review.example.test:29419/example/app'},{repository:'ssh://git@other.example.test:29418/example/app'},{repository:'https://fixture:credential@review.example.test/example/app'},{repository:'file:///example/app'},{headSha:'f'.repeat(40)},{certainty:'partial'}].entries())runtime.handleEvent({...request(`scm-boundary-${index}`),source:'manual',scm:{...known,...patch}});
+  await runtime.drain();assert.equal(calls,0);assert.equal(store.listTickets().length,6);assert.ok(store.listTickets().every(ticket=>ticket.status==='failed'));assert.ok(store.listTickets().every(ticket=>!ticket.error.includes('fixture:credential')));
+});

@@ -9,6 +9,7 @@ This repository is a research fork based on [`deepseek-ai/dsh-superagent-prototy
 - Use `.agents/skills/tdd/SKILL.md` for red-green, one behavior seam at a time. Choose the narrowest observable public behavior seam from the task and existing interfaces; do not pause for a separate seam approval. Use `.agents/skills/pstack-tdd/SKILL.md` for focused bug regression work where a cheap executable reproduction exists.
 - Read `context.md` before changes that depend on project vocabulary or architecture. Keep it accurate when code changes alter those concepts.
 - Keep secrets out of tracked files, logs, and docs. Use placeholders and secure retrieval instructions.
+- Keep private company identifiers, internal hosts, VM addresses, project paths, integration identifiers and deployment logs outside this public checkout. Use synthetic examples in code, tests, docs, commit messages and PRs; review the full staged diff, author/committer metadata and publication text before pushing. Use a public Git identity and no-reply email for this repository.
 
 ## Model preferences
 

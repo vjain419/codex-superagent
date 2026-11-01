@@ -28,7 +28,7 @@ async function jsonBody(req) {
 }
 export function createServer({store,config,adminToken,health=()=>({}),updateConfig,submit,cancel}) {
   if(typeof adminToken!=='string'||adminToken.length<32) throw new Error('Admin token must have at least 32 characters');
-  let desiredConfig=structuredClone(config);
+  let desiredConfig={...structuredClone(config),gerrit:structuredClone(config.gerrit??[])};
   return httpServer(async(req,res)=>{
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Cache-Control','no-store');
@@ -48,7 +48,7 @@ export function createServer({store,config,adminToken,health=()=>({}),updateConf
       if(req.method==='GET'&&path.startsWith('/api/tickets/')) {const t=store.getTicket(decodePathComponent(path.slice(13)));return send(t?200:404,t??{error:'Ticket not found'});}
       if(req.method==='GET'&&path==='/api/config') return send(200,desiredConfig);
       if(req.method==='PUT'&&path==='/api/config') {
-        const patch=await jsonBody(req),allowed=['mode','pollSeconds','github','jenkins','slack','economics'];
+        const patch=await jsonBody(req),allowed=['mode','pollSeconds','github','jenkins','gerrit','slack','economics'];
         if(!patch||Array.isArray(patch)||Object.keys(patch).some(k=>!allowed.includes(k))) return send(400,{error:'Only operational settings can be edited here; edit paths/model in the VM configuration file'});
         let next;
         try { next=validateConfig({...desiredConfig,...patch}); }
