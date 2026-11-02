@@ -41,3 +41,11 @@ One repository/worker, bounded polling windows, per-ticket fresh Codex thread an
 The standalone service has no analytics exporter and does not run DeepSeek Harness. Expected outgoing traffic: configured GitHub/Jenkins/Gerrit APIs, Slack HTTPS/WebSockets, and the configured Codex model provider. Prompts, selected task evidence and tool results can go to that model provider. Codex's own data controls remain relevant; this implementation is not a packet-capture audit or a promise of zero host telemetry.
 
 Integration tokens stay in the controller's environment; the worker receives a minimal environment and a dedicated Codex home. Ticket clones omit source Git config, hooks and shared object alternates, and host checkout filters are disabled. Shell filesystem/network enforcement relies on the verified Codex profile and deployment OS. Run on a dedicated account/VM, keep secrets out of tracked source, and validate the sandbox on that host before enabling work.
+
+## Built-in workspace and automatic review
+
+- Regression reproduced before the change: an allowed built-in workspace response was rejected by the custom-profile check. After the change, that task completes through the protocol fixture.
+- Separate regression reproduced inherited MCP entries remaining enabled; the executor now reads effective configuration and explicitly disables each inherited server before thread creation.
+- 68 service tests plus 2 deployment tests pass locally, including incorrect profile, approval policy, reviewer, network access and sandbox rejection, along with existing timeout/cancellation cases.
+- Real local Codex protocol smoke verifies built-in `:workspace`, `on-request`, `auto_review`, workspace writes and initially disabled network access. A synthetic inherited MCP sentinel does not launch. No model turn sent. The earlier custom-profile smoke above records historical behavior.
+- Built-in workspace allows broader reads than the old custom profile; automatic review may approve boundary-crossing actions. This is not equivalent to the former credential-deny filesystem policy. Use OS account/container separation for unrelated secrets; verify managed-account compatibility privately on the deployment host.
