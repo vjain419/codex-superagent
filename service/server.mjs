@@ -45,7 +45,7 @@ export function createServer({store,config,adminToken,health=()=>({}),updateConf
       }
       if(req.method==='GET'&&path==='/api/status') {const metrics=store.metrics();return send(200,{mode:config.mode,health:health(),metrics,economics:estimateEconomics(metrics,config.economics)});}
       if(req.method==='GET'&&path==='/api/tickets') return send(200,{tickets:store.listTickets({limit:100})});
-      if(req.method==='GET'&&path.startsWith('/api/tickets/')) {const t=store.getTicket(decodePathComponent(path.slice(13)));return send(t?200:404,t??{error:'Ticket not found'});}
+      if(req.method==='GET'&&path.startsWith('/api/tickets/')) {const t=store.getTicket(decodePathComponent(path.slice(13)));return send(t?200:404,t?{...t,deliveries:store.listDeliveries(t.id)}:{error:'Ticket not found'});}
       if(req.method==='GET'&&path==='/api/config') return send(200,desiredConfig);
       if(req.method==='PUT'&&path==='/api/config') {
         const patch=await jsonBody(req),allowed=['mode','pollSeconds','github','jenkins','gerrit','slack','economics'];
