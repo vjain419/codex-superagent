@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { defaults } from '../config.mjs';
 import { createServer, estimateEconomics } from '../server.mjs';
 const token='test-admin-token-with-at-least-32-characters';
-const store={listTickets:()=>[{id:'1',status:'succeeded',text:'<script>bad</script>'}],metrics:()=>({succeeded:1}),getTicket:id=>id==='1'?{id}:null};
+const store={listDeliveries:()=>[],listTickets:()=>[{id:'1',status:'succeeded',text:'<script>bad</script>'}],metrics:()=>({succeeded:1}),getTicket:id=>id==='1'?{id}:null};
 
 test('API requires bearer authentication; health omits private state',async()=>{
   const server=createServer({store,config:defaults('/tmp/test'),adminToken:token,health:()=>({ready:true})});

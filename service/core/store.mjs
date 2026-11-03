@@ -24,7 +24,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS tickets_status ON tickets(status,created_at);
-      CREATE INDEX IF NOT EXISTS outbox_status ON outbox(status);`);
+      CREATE INDEX IF NOT EXISTS outbox_status ON outbox(status);
+      CREATE INDEX IF NOT EXISTS outbox_ticket ON outbox(ticket_id);`);
   }
   atomic(fn) {
     this.db.exec('BEGIN IMMEDIATE');
@@ -93,11 +94,18 @@ export class Store {
   getState(key) { const row=this.db.prepare('SELECT value FROM state WHERE key=?').get(key); return row ? JSON.parse(row.value) : undefined; }
   setState(key,value) { this.db.prepare('INSERT INTO state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value)); }
   listOutbox({limit=100}={}) { return this.db.prepare("SELECT data FROM outbox WHERE status='pending' ORDER BY rowid LIMIT ?").all(Math.max(1,Math.min(1000,Number(limit)||100))).map(decode); }
+  listDeliveries(ticketId) {
+    return this.db.prepare('SELECT data FROM outbox WHERE ticket_id=? ORDER BY rowid').all(ticketId).map(record=>{
+      const {id,status,attempts,createdAt,updatedAt,error}=decode(record);
+      const retry=status==='pending'?this.getState(`reply-retry:${id}`):undefined;
+      return {id,status,attempts,createdAt,updatedAt,error,nextAttemptAt:Number.isFinite(retry)&&retry>0?new Date(retry).toISOString():undefined};
+    });
+  }
   markOutboxSent(id) { this._updateOutbox(id,true); }
   markOutboxFailed(id,error) { this._updateOutbox(id,false,error); }
   _updateOutbox(id,sent,error) {
     const row=decode(this.db.prepare('SELECT data FROM outbox WHERE id=?').get(id)); if(!row) throw new Error('Unknown outbox item');
-    row.attempts++; row.status=sent?'sent':'pending'; row.error=sent?undefined:String(error).slice(0,500);
+    row.attempts++; row.updatedAt=new Date().toISOString(); row.status=sent?'sent':'pending'; row.error=sent?undefined:String(error).slice(0,500);
     this.db.prepare('UPDATE outbox SET status=?,data=? WHERE id=?').run(row.status,JSON.stringify(row),id);
   }
   metrics() {

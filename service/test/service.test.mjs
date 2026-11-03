@@ -67,3 +67,43 @@ test('authenticated task reaches executor and measured dashboard; pause persists
     await request('tickets',{text:'Wait until resumed'});await runtime.drain();assert.equal(store.metrics().queued,1);
   }finally{await runtime.stop();await new Promise(r=>server.close(r));store.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('authenticated ticket inspection distinguishes execution success from pending, failed and sent replies',async()=>{
+  const store=new Store(':memory:'),config=defaults('/tmp/fixture-service');
+  const token='fixture-inspection-token-abcdefghijklmnopqrstuvwxyz';
+  const server=createServer({store,config,adminToken:token});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const base=`http://127.0.0.1:${server.address().port}/api/`,headers={authorization:`Bearer ${token}`};
+  const read=async path=>{const response=await fetch(base+path,{headers});assert.equal(response.status,200);return response.json();};
+  let fail=true;
+  const monitor=new Monitor({store,config,runtime:{},secrets:{},slack:{async send(){if(fail)throw new Error('unavailable');}}});
+  try{
+    const {ticket}=store.ingest({source:'slack',kind:'request',id:'fixture-event',authorized:true,text:'Check the fixture',reply:{team:'T1',channel:'C1',threadTs:'1.2'}});
+    assert.equal((await fetch(base+'tickets/'+ticket.id)).status,401);
+    assert.deepEqual((await read('tickets/'+ticket.id)).deliveries,[]);
+    store.updateTicket(ticket.id,{status:'succeeded',result:'Fixture complete',finishedAt:new Date().toISOString()});
+    let detail=await read('tickets/'+ticket.id);
+    assert.equal(detail.status,'succeeded');
+    assert.equal(detail.deliveries[0].status,'pending');
+    assert.equal(detail.deliveries[0].attempts,0);
+    assert.equal((await read('status')).metrics.pendingReplies,1);
+    await monitor.flushReplies();
+    detail=await read('tickets/'+ticket.id);
+    const delivery=detail.deliveries[0];
+    assert.equal(delivery.status,'pending');
+    assert.equal(delivery.attempts,1);
+    assert.equal(delivery.error,'Slack delivery failed');
+    assert.ok(Number.isFinite(Date.parse(delivery.updatedAt)));
+    assert.ok(Date.parse(delivery.nextAttemptAt)>Date.parse(delivery.updatedAt));
+    assert.equal(delivery.text,undefined);
+    fail=false;store.setState(`reply-retry:${delivery.id}`,0);
+    await monitor.flushReplies();
+    detail=await read('tickets/'+ticket.id);
+    assert.equal(detail.deliveries[0].status,'sent');
+    assert.equal(detail.deliveries[0].attempts,2);
+    assert.equal(detail.deliveries[0].error,undefined);
+    assert.equal(detail.deliveries[0].nextAttemptAt,undefined);
+    assert.equal((await read('status')).metrics.pendingReplies,0);
+    assert.equal((await fetch(base+'tickets/unknown',{headers})).status,404);
+  }finally{await new Promise(resolve=>server.close(resolve));store.close();}
+});
