@@ -49,3 +49,10 @@ Integration tokens stay in the controller's environment; the worker receives a m
 - 68 service tests plus 2 deployment tests pass locally, including incorrect profile, approval policy, reviewer, network access and sandbox rejection, along with existing timeout/cancellation cases.
 - Real local Codex protocol smoke verifies built-in `:workspace`, `on-request`, `auto_review`, workspace writes and initially disabled network access. A synthetic inherited MCP sentinel does not launch. No model turn sent. The earlier custom-profile smoke above records historical behavior.
 - Built-in workspace allows broader reads than the old custom profile; automatic review may approve boundary-crossing actions. This is not equivalent to the former credential-deny filesystem policy. Use OS account/container separation for unrelated secrets; verify managed-account compatibility privately on the deployment host.
+
+## Dashboard configuration feedback
+
+- Reproduced validation rejection in Chrome with no visible feedback beside the save button. The API rejected invalid values correctly; its message appeared above the dashboard, outside the current viewport.
+- Added an inline live status region, saving/disabled button state and a 15-second save-request timeout. Connection failures report an unconfirmed save (a lost response does not prove the server failed to write); the draft remains available. Provider changes still require a service restart.
+- Optional browser regression uses the real HTTP/config persistence path with a temporary configuration and stub metrics/ticket data. It checks visible validation errors, unchanged disk after rejection, successful save/restart feedback, disk persistence after reload, and connection failure with draft retention. No model or external integration is called.
+- Run with Chrome installed and an external Playwright installation: `node service/test/dashboard-smoke.mjs /absolute/path/to/playwright/index.mjs`. Playwright is a test tool, not a service dependency.
