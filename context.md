@@ -10,7 +10,7 @@ Standalone Codex app-server fork of [`deepseek-ai/dsh-superagent-prototype`](htt
 - Built-in `:workspace` Codex app-server per ticket with on-request automatic approval review; effective profile/reviewer/sandbox checked before inference, inherited MCP server entries disabled; sanitized local clone, no source Git credential/config sharing; verified CI repo/commit or fail closed.
 - Slack Socket Mode with explicit identity allowlists; GitHub Actions + standard Jenkins/CloudBees API readers; initial bounded baseline and durable dedup.
 - Gerrit read-only patchset reader with exact project allowlists, bounded baseline and observed-only tickets in every mode. Status is captured at first observation; status-only transitions are not a separate feed. Generic SSH/scp Git identities retain nondefault ports; explicit internal SCM tasks verify origin and locally available SHA.
-- Authenticated dashboard with status, tasks, configuration, usage and explicitly estimated economics.
+- Authenticated dashboard with status, tasks, configuration, usage and explicitly estimated economics. Configuration saves show progress, success/restart requirements and errors beside the button; failed or unconfirmed saves preserve the draft.
 - Native systemd user installer, Docker/Compose packaging, connection templates and CI workflow.
 - 59 repository skills: 39 Matt Pocock, 18 focused pstack, ponytail and Karpathy. Default ponytail full, TDD. Source pins/license notices in [skills](docs/skills.md).
 
