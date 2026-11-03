@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import { createServer } from '../server.mjs';
+import { defaults } from '../config.mjs';
+import { Store } from '../core/store.mjs';
+
+// Optional browser check: pass an installed Playwright module path; requires Chrome.
+const { chromium } = await import(process.argv[2] ?? 'playwright');
+const store = new Store(':memory:');
+const token = 'fixture-observability-token-'.repeat(3);
+const config = defaults('/tmp/superagent-fixture');
+for(let i=0;i<101;i++) store.ingest({id:'observed-'+i,source:'ci',kind:'ci',job:'fixture-build',build:i,status:'failed',text:'Investigate fixture CI failure'});
+const running = store.ingest({id:'running',source:'manual',kind:'request',authorized:true,text:'Check fixture build <img src=x onerror=alert(1)>',reply:{channel:'fixture-channel'}}).ticket;
+store.updateTicket(running.id,{status:'running',startedAt:new Date().toISOString(),usage:{inputTokens:120,outputTokens:40,totalTokens:160}});
+const queued = store.ingest({id:'queued',source:'manual',kind:'request',authorized:true,text:'Prepare fixture patch'}).ticket;
+const server = createServer({config,adminToken:token,store,health:()=>({startedAt:'2026-01-02T09:00:00.000Z',slack:'connected',restartRequired:false,providers:{'github:fixture':{healthy:true,complete:true,checkedAt:new Date().toISOString(),errors:[]}},runtimeError:null})});
+let browser;
+try {
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  browser = await chromium.launch({channel:'chrome'});
+  const page = await browser.newPage({viewport:{width:1280,height:900}});
+  const browserErrors=[];
+  page.on('pageerror',error=>browserErrors.push(error.message));
+  page.on('response',response=>{if(response.url().includes('/api/')&&response.status()>=400)browserErrors.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);});
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.getByLabel('Admin token').fill(token);
+  await page.getByRole('button',{name:'Connect',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#metrics').textContent.includes('In progress'),{},{timeout:1500});
+  for(const [label,value] of [['In progress','1'],['Queued','1'],['Observed','101'],['Tickets','103'],['Pending replies','0']]) {
+    assert.equal(await page.locator('.metric').filter({has:page.getByText(label,{exact:true})}).locator('strong').textContent(),value);
+  }
+  const runningRow=page.getByRole('row').filter({hasText:running.id.slice(0,12)});
+  await runningRow.getByRole('button',{name:'Inspect',exact:true}).click();
+  await page.getByRole('heading',{name:'Request',exact:true}).waitFor({timeout:1500});
+  const detail=page.locator('#detail');
+  assert.match(await detail.textContent(),/In progress/);
+  assert.match(await detail.textContent(),/Check fixture build <img src=x onerror=alert\(1\)>/);
+  assert.equal(await detail.locator('img').count(),0,'Request must render as text');
+  assert.match(await detail.textContent(),/Execution started/);
+  assert.match(await detail.textContent(),/Tool-by-tool activity is not recorded/);
+  assert.match(await detail.textContent(),/Input tokens[\s\S]*120/);
+  assert.equal(await detail.getByText('Raw JSON',{exact:true}).locator('..').getAttribute('open'),null);
+  assert.match(await page.locator('#health').textContent(),/Slack: connected/);
+  assert.match(await page.locator('#health').textContent(),/Healthy/);
+  assert.match(await detail.textContent(),/Reply pending execution completion/);
+  store.updateTicket(running.id,{status:'succeeded',result:'Fixture build checked. Ready for review. <script>unsafe()</script>',finishedAt:new Date().toISOString()});
+  await page.waitForFunction(()=>document.querySelector('#detail').textContent.includes('Fixture build checked.'),{},{timeout:30000});
+  assert.match(await detail.textContent(),/Execution finished · Succeeded/);
+  assert.match(await detail.textContent(),/Pending delivery; not yet attempted/);
+  assert.equal(await detail.locator('script').count(),0,'Result must render as text');
+  assert.equal(await page.locator('.metric').filter({has:page.getByText('In progress',{exact:true})}).locator('strong').textContent(),'0');
+  const delivery=store.listOutbox()[0];
+  store.markOutboxFailed(delivery.id,'Fixture delivery error <img src=x>');
+  store.setState('reply-retry:'+delivery.id,Date.now()+30000);
+  await page.waitForFunction(()=>document.querySelector('#detail').textContent.includes('Pending retry.'),{},{timeout:30000});
+  assert.match(await detail.textContent(),/Next retry/);
+  assert.match(await detail.textContent(),/Delivery error: Fixture delivery error <img src=x>/);
+  assert.equal(await detail.locator('img').count(),0,'Delivery errors must render as text');
+  store.markOutboxSent(delivery.id);
+  await page.waitForFunction(()=>document.querySelector('#detail').textContent.includes('Sent to Slack.'),{},{timeout:30000});
+  assert.equal(await page.locator('.metric').filter({has:page.getByText('Pending replies',{exact:true})}).locator('strong').textContent(),'0');
+  await page.locator('#ticket-detail').scrollIntoViewIfNeeded();
+  if(process.argv[3]) await page.locator('#ticket-detail').screenshot({path:process.argv[3]});
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Mobile must not overflow the viewport');
+  if(process.argv[4]) await page.locator('#ticket-detail').screenshot({path:process.argv[4]});
+  store.updateTicket(queued.id,{status:'interrupted',error:'Fixture cancelled before execution.',finishedAt:new Date().toISOString()});
+  await page.getByRole('row').filter({hasText:queued.id.slice(0,12)}).getByRole('button',{name:'Inspect',exact:true}).click();
+  await page.getByText('Error: Fixture cancelled before execution.',{exact:true}).waitFor();
+  assert.equal(await detail.locator('.timeline').getByText(/Execution started/).count(),0,'Never invent an execution start');
+  assert.match(await detail.textContent(),/No Slack reply destination/);
+  assert.match(await detail.textContent(),/Ticket closed · Interrupted/);
+  store.updateTicket(queued.id,{status:'failed',error:'Fixture workspace setup failed.',finishedAt:new Date().toISOString()});
+  await page.getByRole('row').filter({hasText:queued.id.slice(0,12)}).getByRole('button',{name:'Inspect',exact:true}).click();
+  await page.getByText('Error: Fixture workspace setup failed.',{exact:true}).waitFor();
+  assert.match(await detail.textContent(),/Ticket closed · Failed/);
+  assert.deepEqual(browserErrors,[],'No browser or API errors');
+  console.log('PASS live selected-ticket completion, pending/retry/sent delivery, failed and interrupted outcomes, mobile width.');
+  console.log('PASS readable request, lifecycle, usage, safe text, collapsed raw detail and health.');
+  console.log('PASS whole-store in-progress, queued, observed and reply counters.');
+} finally {
+  await browser?.close();
+  await new Promise(resolve=>server.close(resolve));
+  store.close();
+}
