@@ -8,7 +8,8 @@ import { CodexExecutor } from '../codex/executor.mjs';
 const directory = await mkdtemp(join(tmpdir(), 'superagent-protocol-'));
 const workspace = join(directory, 'workspace');
 const codexHome = join(directory, 'codex-home'), marker = join(directory, 'mcp-started');
-let reachedTurn = false;
+let reachedTurns = 0, session, expectedMethod = 'thread/start', controller;
+const methods = [];
 try {
   await mkdir(workspace);
   await mkdir(codexHome);
@@ -22,10 +23,28 @@ try {
     env: { PATH: process.env.PATH },
     spawn(command, args, options) {
       const child = spawn(command, args, options);
+      let injectedId, buffer = '';
+      child.stdout.on('data', chunk => {
+        buffer += chunk.toString();
+        let newline;
+        while ((newline = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (injectedId != null && message.id === injectedId) controller.abort(new Error(message.error ? `Fixture persistence failed: ${message.error.message}` : 'PROTOCOL_SMOKE_COMPLETE'));
+        }
+      });
       const write = child.stdin.write.bind(child.stdin);
       child.stdin.write = (line, ...rest) => {
-        if (JSON.parse(line).method === 'turn/start') {
-          reachedTurn = true;
+        const message = JSON.parse(line);
+        methods.push(message.method);
+        if (message.method === 'turn/start') {
+          reachedTurns++;
+          if (expectedMethod === 'thread/start') {
+            injectedId = message.id;
+            // A started thread has no rollout until history exists; persist only synthetic text.
+            return write(JSON.stringify({id: message.id, method: 'thread/inject_items', params: {threadId: message.params.threadId, items: [{type: 'message', role: 'assistant', content: [{type: 'output_text', text: 'Protocol smoke fixture; no model call.'}]}]}}) + '\n', ...rest);
+          }
           throw new Error('PROTOCOL_SMOKE_COMPLETE');
         }
         return write(line, ...rest);
@@ -33,14 +52,20 @@ try {
       return child;
     },
   });
-  try {
-    await executor.execute({ id: 'protocol-smoke', prompt: 'Never forwarded', workspace });
-  } catch (error) {
-    if (error.message !== 'PROTOCOL_SMOKE_COMPLETE') throw error;
+  for (const resumed of [false, true]) {
+    expectedMethod = resumed ? 'thread/resume' : 'thread/start';
+    methods.length = 0;
+    controller = new AbortController();
+    try {
+      await executor.execute({ id: 'protocol-smoke', prompt: 'Never forwarded', workspace, signal: controller.signal, ...(resumed ? { threadId: session?.threadId, totalUsage: session?.totalUsage } : {}) }, () => {}, value => { session = value; });
+    } catch (error) {
+      if (error.message !== 'PROTOCOL_SMOKE_COMPLETE') throw error;
+    }
+    if (!session?.threadId || !methods.includes(expectedMethod) || methods.includes(resumed ? 'thread/start' : 'thread/resume')) throw new Error(`Handshake did not validate ${expectedMethod}`);
   }
-  if (!reachedTurn) throw new Error('Handshake did not reach a validated thread');
+  if (reachedTurns !== 2) throw new Error('Start and resume did not both reach a validated thread');
   try { await access(marker); throw new Error('Inherited MCP server launched'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  console.log('PASS initialize → config/read → thread/start; built-in :workspace, network disabled, on-request and auto_review verified. Inherited MCP sentinel did not launch. No turn sent; no authentication or model call.');
+  console.log('PASS initialize → config/read → thread/start → restart → thread/resume; same workspace/session, built-in :workspace, network disabled, on-request and auto_review verified. Inherited MCP sentinel did not launch. Synthetic history persisted through thread/inject_items. Both turn/start requests intercepted. No turn sent; no authentication or model call.');
 } catch (error) {
   console.error(`Protocol smoke failed: ${error.message}`);
   process.exitCode = 1;

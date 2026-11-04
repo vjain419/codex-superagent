@@ -115,3 +115,55 @@ test('Slack SDK rejects untrusted socket URLs without connecting', async () => {
   assert.equal(calls[0].url, 'https://slack.com/api/apps.connections.open');
   assert.equal(calls[0].options.redirect, 'error');
 });
+
+test('Slack reactions target the original message and safely retry terminal status', async () => {
+  const calls = [];
+  const connector = new SlackConnector(config, {
+    onEvent: async () => {},
+    fetch: async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url: String(url), body });
+      if (url.endsWith('reactions.remove')) return Response.json({ ok: false, error: 'no_reaction' });
+      if (body.name === 'done') return Response.json({ ok: false, error: 'invalid_name' });
+      return Response.json({ ok: body.name !== 'eyes', error: 'already_reacted' });
+    },
+  });
+  const message = { team: 'T1', channel: 'C1', messageTs: '14.123', threadTs: '12.345' };
+  await connector.react(message, 'eyes');
+  await connector.react(message, 'done');
+  assert.deepEqual(calls.map(({ url, body }) => [url.split('/').pop(), body.name, body.channel, body.timestamp]), [
+    ['reactions.add', 'eyes', 'C1', '14.123'],
+    ['reactions.remove', 'eyes', 'C1', '14.123'],
+    ['reactions.add', 'done', 'C1', '14.123'],
+    ['reactions.add', 'white_check_mark', 'C1', '14.123'],
+  ]);
+  await assert.rejects(connector.react({ ...message, channel: 'C2' }, 'eyes'), /Invalid Slack/);
+});
+
+test('Slack carries bounded forwarded attachment text as untrusted evidence', async () => {
+  const events = [];
+  const connector = new SlackConnector(config, { onEvent: async event => events.push(event) });
+  await connector.handleEnvelope({ ...payload({ ...mention, attachments: [
+    { text: 'Fixture failure\nexpected 2, got 3', fallback: 'duplicate fallback' },
+    { blocks: [{ type: 'rich_text', elements: [{ type: 'rich_text_section', elements: [{ type: 'text', text: 'Stack trace in fixture' }] }] }] },
+    { fallback: 'x'.repeat(20000) },
+  ] }), ack: async () => {} });
+  assert.match(events[0].text, /Untrusted Slack attachment/);
+  assert.match(events[0].text, /> Fixture failure\n> expected 2, got 3/);
+  assert.match(events[0].text, /> Stack trace in fixture/);
+  assert.doesNotMatch(events[0].text, /duplicate fallback/);
+  assert.ok(events[0].text.length < 8000);
+});
+
+test('mention and message subscriptions do not create duplicate work for the same mention', async () => {
+  const events = [];
+  const connector = new SlackConnector(config, { onEvent: async event => events.push(event), isThreadAuthorized: async () => true });
+  const threaded = { ...mention, ts: '14.123', thread_ts: '12.345' };
+  await Promise.all([
+    connector.handleEnvelope({ ...payload({ ...threaded, type: 'message' }, 'EvMessage'), ack: async () => {} }),
+    connector.handleEnvelope({ ...payload(threaded, 'EvMention'), ack: async () => {} }),
+  ]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].messageTs, '14.123');
+  assert.equal(events[0].reply.threadTs, '12.345');
+});

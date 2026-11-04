@@ -34,7 +34,7 @@ Gerrit extension coverage: JSON prefix parsing, exact project boundaries, return
 
 ## Product limits
 
-One repository/worker, bounded polling windows, per-ticket fresh Codex thread and sanitized local clone, no automatic fetch/push/PR/merge, no full console/artifact extraction, no cross-provider mirrored-run correlation. Jenkins historical repository provenance is unknown; automatic repair fails closed. Slack replies are at-least-once: an ambiguous send/crash may duplicate a result. Disk retention is operator-managed. Financial figures are explicit estimates; successful turns do not establish fixed CI or measured labor savings.
+One repository/worker, bounded polling windows, fresh Codex threads and sanitized local clones for independent work; authorized Slack followups resume their conversation, no automatic fetch/push/PR/merge, no full console/artifact extraction, no cross-provider mirrored-run correlation. Jenkins historical repository provenance is unknown; automatic repair fails closed. Slack replies are at-least-once: an ambiguous send/crash may duplicate a result. Disk retention is operator-managed. Financial figures are explicit estimates; successful turns do not establish fixed CI or measured labor savings.
 
 ## Security and egress
 
@@ -66,3 +66,11 @@ Integration tokens stay in the controller's environment; the worker receives a m
 - The lifecycle view is not a command-by-command execution log or model reasoning transcript. Individual tool calls are not retained by the current runtime. No live model turn is required for these checks.
 - Optional Chrome check: `node service/test/dashboard-observability.mjs /absolute/path/to/playwright/index.mjs [desktop-screenshot.png] [mobile-screenshot.png]`. Uses real Store/HTTP endpoints with synthetic tickets, verifies whole-database counters beyond the 100-row list, readable Inspect, actual periodic refresh, delivery transitions, literal rendering of HTML-like text, failure/interruption and mobile overflow. Existing dashboard-save smoke remains applicable.
 - Final local verification: 69 service tests plus 2 deployment tests pass; dashboard-save browser regression also passes. Browser observability fixtures do not send Slack messages or invoke a model.
+
+## Slack conversation continuity and reactions
+
+- Red/green regressions reproduce lost workspace/context across followups and restart, incorrect start-versus-resume protocol calls, commentary leaking into final replies, and SCM-pinned work attempting to reuse an unrelated revision.
+- Durable conversation ownership is exact to workspace/team/channel/thread; tests reject cross-conversation reuse, missing workspace state and resumed session identity mismatches. Session IDs persist before inference so failed or cancelled turns retain their conversation.
+- Reactions target the triggering message timestamp. Tests cover pending eyes, completion done with invalid-name checkmark fallback, failure x, independent reply delivery, delayed retries, restart recovery and stale in-flight acknowledgements.
+- Forwarded message text is bounded and explicitly framed as untrusted evidence. Manifest regression requires public-channel message events and reaction permissions. Existing installations must save the event subscription; manifest changes do not update deployed Slack apps automatically.
+- Real app-server protocol smoke validates startup/resume permission compatibility without forwarding a model turn. Paid/live deployment evidence stays in private operator records.

@@ -14,6 +14,7 @@ function renderHealth(health){
   const list=element('ul',undefined,'health-list');
   for(const text of [`Slack: ${health.slack??'Unavailable'}`,`Service started: ${date(health.startedAt)}`,health.restartRequired?'Configuration changes require a service restart.':'No configuration restart pending.'])list.append(element('li',text));
   if(health.runtimeError)list.append(element('li','Runtime: '+health.runtimeError));
+  if(health.reactions)list.append(element('li',`Slack reactions: ${health.reactions.pending} pending · ${health.reactions.failed} awaiting retry after failure`));
   const providers=Object.entries(health.providers??{});
   for(const [name,p] of providers){const item=element('li',`${name}: ${p.healthy?'Healthy':'Unhealthy'} · checked ${date(p.checkedAt)}${p.complete===false?' · Incomplete poll':''}`);for(const error of p.errors??[])item.append(element('p',error));list.append(item);}
   if(!providers.length)list.append(element('li','No provider checks recorded yet.'));
@@ -22,7 +23,7 @@ function renderHealth(health){
 function renderTicket(t){
   const detail=$('detail'),rawOpen=detail.querySelector('details')?.open??false;
   const status=stateLabels[t.status]??t.status;
-  detail.replaceChildren(element('h3',status+' · '+source(t)),fields([['Ticket',t.id],['Created',date(t.createdAt)],['Last updated',date(t.updatedAt)]]));
+  detail.replaceChildren(element('h3',status+' · '+source(t)),fields([['Ticket',t.id],['Created',date(t.createdAt)],['Last updated',date(t.updatedAt)],...(t.threadId?[['Codex session',t.threadId]]:[])]));
   detail.append(detailSection('Request',element('p',t.event?.text||'No request text recorded.','ticket-text')));
   const timeline=element('ol',undefined,'timeline');
   for(const [label,value] of [['Ticket recorded',t.createdAt],['Execution started',t.startedAt],[(t.startedAt?'Execution finished':'Ticket closed')+' · '+status,t.finishedAt]])if(value)timeline.append(element('li',`${label} — ${date(value)}`));

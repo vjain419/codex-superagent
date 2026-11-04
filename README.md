@@ -14,7 +14,7 @@ Gerrit patchsets┘                            (Gerrit stays observed)
 
 ## What works
 
-- Slack Socket Mode: explicit authorized mentions, allowlisted workspace/channel/users, durable intake deduplication and thread replies.
+- Slack Socket Mode: authorized mentions and thread followups, allowlisted workspace/channel/users, durable intake deduplication, reactions and thread replies.
 - GitHub Actions and Jenkins/CloudBees: read-only API polling, per-run identities, initial historical baseline, terminal-state distinctions and visible coverage/errors. Polling itself uses no LLM.
 - Gerrit: read-only, bounded patchset polling with historical baseline and deduplication; new patchsets appear as observed tickets even in auto mode. Generic local Git checkouts support HTTPS and SSH origins, including Gerrit ports.
 - Codex: isolated stdio process per task, verified restrictive permissions, dedicated Codex home, bounded execution and cancellation. No inherited integration-token environment.
@@ -41,7 +41,7 @@ Open `http://127.0.0.1:3082`, using the admin token generated in private `servic
 
 - CI monitoring covers a configurable recent window. Coverage warnings are visible; it is not a lossless event archive. No webhook listener or CI build mutations.
 - Automatic CI repair requires verified repository identity and a matching local commit. Jenkins metadata currently lacks complete historical repository provenance, so automatic repair fails closed; observation and explicit investigation remain available.
-- One configured local repository, one worker, fresh Codex thread per ticket. Slack followups create new tickets, not resumed Codex conversations. Mention the bot on followups with the minimal Slack manifest.
+- One configured local repository and one worker. Authorized Slack thread followups create separate tickets while resuming the same Codex conversation and isolated workspace.
 - Provider adapters currently collect build metadata, not full console logs, artifacts or test reports. Supply relevant bounded evidence in an explicit task when needed.
 - No automatic pushes, PR creation or merges by the deployed agent. Results remain local for review. The development PR workflow for this fork is separate.
 - No SSO, multi-tenancy, retention scheduler, cross-provider mirrored-run correlation or verified-fix tracking. Completed turns are not proof of repaired CI.

@@ -89,3 +89,41 @@ test('explicit SCM metadata cannot select another repository, SSH service or uns
   for(const [index,patch] of [{repository:'ssh://git@review.example.test:29419/example/app'},{repository:'ssh://git@other.example.test:29418/example/app'},{repository:'https://fixture:credential@review.example.test/example/app'},{repository:'file:///example/app'},{headSha:'f'.repeat(40)},{certainty:'partial'}].entries())runtime.handleEvent({...request(`scm-boundary-${index}`),source:'manual',scm:{...known,...patch}});
   await runtime.drain();assert.equal(calls,0);assert.equal(store.listTickets().length,6);assert.ok(store.listTickets().every(ticket=>ticket.status==='failed'));assert.ok(store.listTickets().every(ticket=>!ticket.error.includes('fixture:credential')));
 });
+
+test('Slack follow-ups reuse their workspace and Codex thread after restart',async t=>{
+  const {store,dir}=fixture(t),config={mode:'observe',workspaceRoot:join(dir,'tickets')},calls=[];
+  const event=id=>({...request(id),reply:{team:'T1',channel:'C1',threadTs:'100.1'}});
+  const executor={async execute(job,onUsage,onSession){calls.push(job);onSession?.({threadId:'session-one'});return {text:'done',threadId:'session-one'};}};
+  let runtime=new Runtime({store,config,executor});const first=runtime.handleEvent(event('first')).ticket;await runtime.drain();await runtime.stop();
+  const reopened=new Store(join(dir,'state.sqlite'));t.after(()=>reopened.close());runtime=new Runtime({store:reopened,config,executor});const second=runtime.handleEvent(event('second')).ticket;await runtime.drain();
+  assert.equal(calls[1].workspace,calls[0].workspace);assert.equal(calls[1].threadId,'session-one');assert.notEqual(first.id,second.id);assert.equal(reopened.getTicket(second.id).threadId,'session-one');
+});
+
+test('Slack team, channel and root thread each isolate sessions and workspaces',async t=>{
+  const {store,dir}=fixture(t),calls=[];const runtime=new Runtime({store,config:{workspaceRoot:join(dir,'tickets')},executor:{async execute(job,onUsage,onSession){calls.push(job);onSession({threadId:`session-${calls.length}`});return {text:'done',threadId:`session-${calls.length}`};}}});
+  for(const [index,reply] of [{team:'T1',channel:'C1',threadTs:'100.1'},{team:'T2',channel:'C1',threadTs:'100.1'},{team:'T1',channel:'C2',threadTs:'100.1'},{team:'T1',channel:'C1',threadTs:'100.2'}].entries())runtime.handleEvent({...request(`isolate-${index}`),reply});
+  await runtime.drain();assert.equal(calls.length,4);assert.equal(new Set(calls.map(job=>job.workspace)).size,4);assert.ok(calls.every(job=>job.threadId===undefined));assert.ok(store.listTickets().every(ticket=>ticket.status==='succeeded'));
+});
+
+for(const outcome of ['failed','cancelled'])test(`Slack ${outcome} turn preserves its early session ID for the next message`,async t=>{
+  const {store,dir}=fixture(t),calls=[];let entered;const started=new Promise(resolve=>entered=resolve),event=id=>({...request(id),reply:{team:'T1',channel:'C1',threadTs:'100.1'}});
+  const runtime=new Runtime({store,config:{workspaceRoot:join(dir,'tickets')},executor:{async execute(job,onUsage,onSession){calls.push(job);if(calls.length===1){onSession({threadId:'retained-session'});entered();if(outcome==='failed')throw new Error('model failed');await new Promise((_,reject)=>job.signal.addEventListener('abort',()=>reject(job.signal.reason),{once:true}));}return {text:'continued',threadId:'retained-session'};}}});
+  const first=runtime.handleEvent(event('first')).ticket;await started;if(outcome==='cancelled')runtime.cancel(first.id);await runtime.drain();
+  assert.equal(store.getTicket(first.id).status,outcome==='failed'?'failed':'interrupted');assert.equal(store.getTicket(first.id).threadId,'retained-session');runtime.handleEvent(event('second'));await runtime.drain();assert.equal(calls[1].threadId,'retained-session');assert.equal(calls[1].workspace,calls[0].workspace);
+});
+
+test('legacy Slack ticket recovers its exact session and preserved workspace',async t=>{
+  const {store,dir}=fixture(t),{mkdirSync,realpathSync}=await import('node:fs'),event=id=>({...request(id),reply:{team:'T1',channel:'C1',threadTs:'100.1'}}),first=store.ingest(event('legacy')).ticket;
+  mkdirSync(join(dir,'tickets',first.id),{recursive:true});const workspace=realpathSync(join(dir,'tickets',first.id));store.updateTicket(first.id,{workspace,threadId:'legacy-session',status:'succeeded',usage:{inputTokens:7,outputTokens:2,totalTokens:9}});
+  let job;const runtime=new Runtime({store,config:{workspaceRoot:join(dir,'tickets')},executor:{async execute(value){job=value;return {text:'continued',threadId:value.threadId};}}});runtime.handleEvent(event('next'));await runtime.drain();assert.equal(job.workspace,workspace);assert.equal(job.threadId,'legacy-session');assert.equal(job.totalUsage.totalTokens,9);
+});
+
+test('conversation cannot claim a session already owned by another Slack context',async t=>{
+  const {store,dir}=fixture(t),runtime=new Runtime({store,config:{workspaceRoot:join(dir,'tickets')},executor:{async execute(job,onUsage,onSession){onSession({threadId:'same-session'});return {text:'done',threadId:'same-session'};}}});
+  runtime.handleEvent({...request('one'),reply:{team:'T1',channel:'C1',threadTs:'100.1'}});await runtime.drain();const second=runtime.handleEvent({...request('two'),reply:{team:'T1',channel:'C1',threadTs:'100.2'}}).ticket;await runtime.drain();assert.equal(store.getTicket(second.id).status,'failed');assert.match(store.getTicket(second.id).error,/another context|UNIQUE/);assert.equal(store.getTicket(second.id).threadId,undefined);
+});
+
+test('a follow-up cannot silently reuse a workspace for a new SCM-pinned request',async t=>{
+  const {store,dir}=fixture(t),event=id=>({...request(id),reply:{team:'T1',channel:'C1',threadTs:'100.1'}});let calls=0;const config={workspaceRoot:join(dir,'tickets')},runtime=new Runtime({store,config,executor:{async execute(){calls++;return {text:'done',threadId:'existing-session'};}}});
+  runtime.handleEvent(event('first'));await runtime.drain();config.repositoryPath=dir;const followup=runtime.handleEvent({...event('pin'),scm:{certainty:'known',repository:'https://github.com/example/other',headSha:'f'.repeat(40)}}).ticket;await runtime.drain();assert.equal(calls,1);assert.equal(store.getTicket(followup.id).status,'failed');assert.match(store.getTicket(followup.id).error,/SCM.*new Slack thread/);
+});
