@@ -8,7 +8,7 @@ A small service on one Linux VM: accept authorized Slack requests, monitor GitHu
 
 ## Milestones and acceptance gates
 
-Implementation complete in `service/`; deployment packaging and verification records accompany the release. See `context.md` for landed milestones and `verification.md` for the distinction between local tests and pending live rollout. The standalone release implements the workflow concepts in a small Node service; it does not claim feature parity or reuse of the entire original DSH core.
+The initial standalone implementation is in `service/`; it does not complete the original behavioural contract. The [independent architecture review](../008-architecture_diff.md) records required restoration gates. Deployment packaging and verification records accompany the release. See `context.md` for landed milestones and `verification.md` for the distinction between local tests and pending live rollout. The standalone release implements the workflow concepts in a small Node service; it does not claim feature parity or reuse of the entire original DSH core.
 
 1. **Foundation and working conventions.** Install repository skills with pinned provenance, document upstream attribution, TDD, model roles and context. Verify links and absence of secrets. PR with only conventions and plan.
 2. **Standalone engine.** Separate Node 24 service, durable SQLite tickets/events/outbox, observe/auto gating, restart recovery and restricted Codex stdio executor. Tests cover duplicate events, authorization, baseline suppression, crash recovery, child errors/timeouts and protocol messages. Legacy Harness remains available for comparison but is excluded from the new service dependency graph.

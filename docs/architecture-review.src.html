@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-register="blueprint">
+<head>
+<title>Codex Superagent — architecture and fidelity review</title>
+<link rel="stylesheet" href="kit.css" data-ve-kit>
+<style>
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-5)}
+.compare>div{min-width:0}
+.frame{max-width:100%;overflow-x:auto}
+.compare h3{margin-bottom:var(--s-3)}
+.compare ve-flow{display:block;min-width:0}
+.note{padding:var(--s-4);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-2)}
+.tagline{font-family:var(--font-mono);font-size:var(--t-small);color:var(--text-dim)}
+.sources a,td{overflow-wrap:anywhere}
+@media(max-width:780px){.compare{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav class="ve-toc" aria-label="Sections"><div><a href="#replacement">Replacement</a><a href="#continuity">Continuity</a><a href="#findings">Findings</a><a href="#target">Required target</a><a href="#evidence">Evidence</a></div><span class="pos"></span></nav>
+<main>
+<header>
+<p class="eyebrow">Independent architecture review · 4 November 2026</p>
+<h1>The fork uses a different coordinator</h1>
+<p class="lead">Codex and Slack continuity work. The original task lifecycle still needs restoration.</p>
+<p class="meta">Upstream 6337fc8 · reviewed service 90e07da + review fixes · public, synthetic examples</p>
+</header>
+<section id="replacement">
+<figure>
+<div class="compare">
+<div><span class="chip ok">Original contract</span><h3>A task owns its inputs and worker</h3>
+<ve-flow label="Original sources submit triggers to an Engine, which owns task authority and reports and dispatches a DSH worker.">
+<ve-node id="orig-source" at="1 1" sub="Messages">Sources</ve-node>
+<ve-node id="orig-engine" at="2 1" sub="Authority" key>Engine</ve-node>
+<ve-node id="orig-task" at="2 2" sub="Inputs">Ongoing task</ve-node>
+<ve-node id="orig-worker" at="1 2" sub="DSH">Worker</ve-node>
+<ve-edge from="orig-source" to="orig-engine" label="submit"/>
+<ve-edge from="orig-engine" to="orig-task" label="authorize"/>
+<ve-edge from="orig-task" to="orig-worker" label="dispatch"/>
+</ve-flow></div>
+<div><span class="chip warn">Current implementation</span><h3>A message creates an execution record</h3>
+<ve-flow label="Current source adapters submit events to Store intake, a single queue creates execution records, and Codex runs each turn.">
+<ve-node id="fork-source" at="1 1" sub="CI and chat">Adapters</ve-node>
+<ve-node id="fork-store" at="2 1" sub="Mode gate">Intake</ve-node>
+<ve-node id="fork-turn" at="2 2" sub="Message" key>Turn queue</ve-node>
+<ve-node id="fork-codex" at="1 2" sub="Saved thread">Codex</ve-node>
+<ve-edge from="fork-source" to="fork-store" label="normalize"/>
+<ve-edge from="fork-store" to="fork-turn" label="enqueue"/>
+<ve-edge from="fork-turn" to="fork-codex" label="start/resume"/>
+</ve-flow></div>
+</div>
+<figcaption><span class="fig-n">Fig. 1</span>The standalone service leaves the original domain Engine unused; changing the model backend was only part of the replacement.</figcaption>
+</figure>
+<p>The retained upstream source is a useful restoration base. Its core ports separate domain rules from the Harness-specific host.</p>
+</section>
+<section id="continuity">
+<div class="sec-head"><p class="ve-label caps">Working today</p><h2>Separate message records now share one saved conversation</h2></div>
+<figure class="ve-steps">
+<ve-flow label="An initial Slack request creates record A and a saved Codex conversation. A plain followup creates record B but resumes the same conversation and checkout.">
+<ve-node id="msg-a" at="1 1" sub="Initial request" data-s="1">Slack mention</ve-node>
+<ve-node id="rec-a" at="2 1" sub="Audit and usage" data-s="2">Record A</ve-node>
+<ve-node id="saved" at="3 1" sub="Shared state" key data-s="3 5">Conversation</ve-node>
+<ve-node id="msg-b" at="1 2" sub="No new mention" data-s="4">Plain reply</ve-node>
+<ve-node id="rec-b" at="2 2" sub="Audit and usage" data-s="4">Record B</ve-node>
+<ve-edge from="msg-a" to="rec-a" label="accept" data-s="2"/>
+<ve-edge from="rec-a" to="saved" label="create" data-s="3"/>
+<ve-edge from="msg-b" to="rec-b" label="accept" data-s="4"/>
+<ve-edge from="rec-b" to="saved" label="resume" hot data-s="5"/>
+</ve-flow>
+<div class="ve-player"><ol class="ve-cap"><li data-n="1/5">An allowed person addresses the bot in a configured channel.</li><li data-n="2/5">Intake stores a durable execution record and queues eyes on that message.</li><li data-n="3/5">Codex starts in an isolated checkout; the controller saves its session ID.</li><li data-n="4/5">A plain reply in that authorized thread receives its own audit record.</li><li data-n="5/5">The next turn resumes the saved session and checkout; it does not yet steer active work.</li></ol><button data-go="-1" aria-label="Previous step">←</button><button data-play>Play</button><input type="range" min="1" max="5" value="5" aria-label="Conversation step"><button data-go="1" aria-label="Next step">→</button></div>
+<figcaption><span class="fig-n">Fig. 2</span>Conversation continuity is implemented and live-verified; upstream continuing task ownership is still missing.</figcaption>
+</figure>
+<div class="note"><span class="chip warn">Semantic gap</span><p>A completed Codex turn can still contain “I am blocked.” The current execution state calls that succeeded. The required task state must preserve the blocker and its question.</p></div>
+</section>
+<section id="findings">
+<div class="sec-head"><p class="ve-label caps">Critical review</p><h2>Passing tests do not establish the original behaviour</h2></div>
+<figure>
+<div class="ve-table"><table><thead><tr><th>Scenario</th><th>Current result</th><th>Required result</th></tr></thead><tbody>
+<tr><td>Correction during work</td><td><span class="chip risk">Gap</span> Queued behind active turn</td><td>Delivered to the owning task promptly</td></tr>
+<tr><td>Worker needs an answer</td><td><span class="chip risk">Gap</span> Textual question in a successful execution</td><td>Stored question and awaiting-answer state</td></tr>
+<tr><td>Person stops the work</td><td><span class="chip warn">Gap</span> Cancels one record</td><td>Withdraws task authority until fresh acceptance</td></tr>
+<tr><td>CI triggers work</td><td><span class="chip warn">Gap</span> Global observe/auto gate</td><td>Written rule, scoped authority and decision evidence</td></tr>
+<tr><td>Restart or background completion</td><td><span class="chip warn">Gap</span> No autonomous task continuation</td><td>Reconcile effects and resume the owning task</td></tr>
+<tr><td>Routine thanks</td><td><span class="chip warn">Gap</span> Another model turn and terminal reply</td><td>Consume or drop quietly when no action is needed</td></tr>
+</tbody></table></div>
+<figcaption><span class="fig-n">Fig. 3</span>Task ownership, truthful outcomes and scoped continuation are required parity work.</figcaption>
+</figure>
+<details><summary>Concrete connector findings and review fixes</summary><p><b>Fixed:</b> delayed reply batches starving later ready replies; accepted settings that connectors reject at runtime.</p><p><b>Open:</b> GitHub workflow aliases can duplicate failure records; Gerrit moving windows can surface historical patchsets; replies delivered before their root authorization can be discarded; queued authority is not revalidated after allowlist changes; one failed workflow selector blocks healthy peers in the same repository.</p><p>These findings have reproductions in the written review. Existing fixture coverage does not prove live CI/Gerrit connectivity.</p></details>
+</section>
+<section id="target">
+<div class="sec-head"><p class="ve-label caps">Required target</p><h2>Keep the domain; adapt execution and sources</h2></div>
+<figure>
+<ve-flow label="Required target, not deployed: source adapters feed the preserved Engine; it assesses policy, owns task inputs and assignments, and uses a Codex execution adapter to deliver structured reports and replies.">
+<ve-node id="target-src" at="1 1" sub="Events">Source adapters</ve-node>
+<ve-node id="target-engine" at="2 1" sub="Domain rules" key>Engine</ve-node>
+<ve-node id="target-eval" at="3 1" sub="Rules">Assessor</ve-node>
+<ve-node id="target-task" at="2 2" sub="Task state">Continuing task</ve-node>
+<ve-node id="target-codex" at="3 2" sub="Protocol">Codex adapter</ve-node>
+<ve-node id="target-out" at="1 2" sub="Replies">Durable effects</ve-node>
+<ve-edge from="target-src" to="target-engine" label="submit"/>
+<ve-edge from="target-engine" to="target-eval" label="assess"/>
+<ve-edge from="target-engine" to="target-task" label="authorize"/>
+<ve-edge from="target-task" to="target-codex" label="deliver"/>
+<ve-edge from="target-task" to="target-out" label="report"/>
+</ve-flow>
+<figcaption><span class="fig-n">Fig. 4</span>This is the restoration design, not the current deployment; its behavioural gates must pass before a parity claim.</figcaption>
+</figure>
+<p>Reuse Codex protocol checks, connector normalization, deployment and privacy controls. Migrate old execution records without inventing past authority, combining unrelated sessions or replaying effects blindly.</p>
+</section>
+<section id="evidence">
+<div class="sec-head"><p class="ve-label caps">Evidence boundary</p><h2>Live evidence is specific to each adapter</h2></div>
+<figure>
+<div class="ve-table"><table><thead><tr><th>Path</th><th>Established evidence</th><th>Limit</th></tr></thead><tbody>
+<tr><td>Codex protocol</td><td><span class="chip ok">Verified</span> Real start, saved history, subprocess restart and resume</td><td>Smoke intercepts inference; it is not a sandbox penetration test</td></tr>
+<tr><td>Slack + Codex</td><td><span class="chip ok">Live evidence</span> Plain reply recalls context; same workspace; reactions observed</td><td>Prior private validation rechecked; active steering still absent</td></tr>
+<tr><td>Local Git</td><td><span class="chip ok">Verified</span> Sanitized clone and committed source access</td><td>Untracked files and dependency bootstrap excluded</td></tr>
+<tr><td>GitHub Actions</td><td><span class="chip ok">Live read</span> Real adapter returned workflow runs from this public repository</td><td>Bounded coverage; no deployed source enabled; alias and selector-isolation defects remain</td></tr>
+<tr><td>Jenkins / Gerrit</td><td><span class="chip warn">Fixtures</span> API normalization and error cases</td><td>No configured live sources in reviewed deployment; operational access unverified</td></tr>
+<tr><td>Original lifecycle</td><td><span class="chip risk">Not met</span> Independent counterexamples recorded</td><td>Required migration and acceptance gates in comparison document</td></tr>
+</tbody></table></div>
+<figcaption><span class="fig-n">Fig. 5</span>Evidence is specific to each path; a green service test suite cannot establish full orchestration parity.</figcaption>
+</figure>
+</section>
+<section class="sources" aria-label="Sources"><p class="ve-label caps">Source documents</p><p><a href="008-architecture_new.md">Current architecture</a> · <a href="008-architecture_diff.md">Critical difference and restoration gates</a> · <a href="000-philosophy.md">Original philosophy</a> · <a href="007-architecture.md">Original architecture</a> · <a href="fork/verification.md">Verification record</a></p><p class="tagline">Canonical Markdown and this visual companion must change with architecture, lifecycle, source contracts and permission changes. Operational identifiers remain private.</p></section>
+</main>
+</body>
+</html>

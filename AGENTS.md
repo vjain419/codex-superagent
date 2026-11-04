@@ -9,6 +9,13 @@ This repository is a research fork based on [`deepseek-ai/dsh-superagent-prototy
 - Use `.agents/skills/tdd/SKILL.md` for red-green, one behavior seam at a time. Choose the narrowest observable public behavior seam from the task and existing interfaces; do not pause for a separate seam approval. Use `.agents/skills/pstack-tdd/SKILL.md` for focused bug regression work where a cheap executable reproduction exists.
 - Read `context.md` before changes that depend on project vocabulary or architecture. Keep it accurate when code changes alter those concepts.
 
+## Preserve the original operating principles
+
+- Before changing orchestration, source routing, task state, permissions or recovery, read `docs/000-philosophy.md`, the relevant upstream domain/authorization/execution document, and `docs/008-architecture_new.md` + `docs/008-architecture_diff.md`.
+- Preserve continuing task ownership, scoped authority, in-scope followups, durable human questions, truthful outcomes and quiet communication. A completed model turn is not a completed task. Prefer adapters around the preserved `src/core` ports when replacing runtime or adding sources; keep missing parity listed as required work rather than silently redefining the product.
+- In the same change, update both architecture documents, their `docs/architecture-review.src.html` / rendered HTML companion, `context.md` and relevant verification evidence when topology, lifecycle, identity, source contracts, persistence, permissions or deployment behaviour changes. Distinguish implemented, tested, live-verified and required target behaviour; use synthetic public examples.
+- Architecture reviews must independently check upstream behavioural contracts with a subagent. Completion requires reconciled findings, current diagrams/links and applicable acceptance evidence. Passing standalone tests alone does not establish upstream parity; explain an unchanged document when no architectural contract changed.
+
 ## Privacy before publication
 
 - Keep secrets, employer names, work email addresses, internal usernames, hosts, VM addresses, project paths, integration identifiers and deployment logs outside this public checkout. Use synthetic examples and environment-variable references in tracked files, documentation, screenshots, commit messages and PRs. Store operational records privately outside the repository.

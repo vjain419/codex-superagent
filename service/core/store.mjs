@@ -119,7 +119,11 @@ export class Store {
   }
   getState(key) { const row=this.db.prepare('SELECT value FROM state WHERE key=?').get(key); return row ? JSON.parse(row.value) : undefined; }
   setState(key,value) { this.db.prepare('INSERT INTO state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value)); }
-  listOutbox({limit=100}={}) { return this.db.prepare("SELECT data FROM outbox WHERE status='pending' ORDER BY rowid LIMIT ?").all(Math.max(1,Math.min(1000,Number(limit)||100))).map(decode); }
+  listOutbox({limit=100,dueAt=null}={}) {
+    return this.db.prepare(`SELECT data FROM outbox WHERE status='pending'
+      AND (? IS NULL OR coalesce(json_extract((SELECT value FROM state WHERE key='reply-retry:' || outbox.id),'$'),0)<=?)
+      ORDER BY rowid LIMIT ?`).all(dueAt,dueAt,Math.max(1,Math.min(1000,Number(limit)||100))).map(decode);
+  }
   listDeliveries(ticketId) {
     return this.db.prepare('SELECT data FROM outbox WHERE ticket_id=? ORDER BY rowid').all(ticketId).map(record=>{
       const {id,status,attempts,createdAt,updatedAt,error}=decode(record);

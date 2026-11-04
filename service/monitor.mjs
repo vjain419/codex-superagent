@@ -32,10 +32,8 @@ export class Monitor {
   }
   async flushReplies() {
     if(!this.slack||this.sending)return;this.sending=true;
-    try{for(const item of this.store.listOutbox({limit:20})){
+    try{for(const item of this.store.listOutbox({limit:20,dueAt:Date.now()})){
       if(this.stopped)break;
-      const retry=this.store.getState(`reply-retry:${item.id}`)??0;
-      if(Date.now()<retry)continue;
       try{await this.slack.send(item.reply,item.text);this.store.markOutboxSent(item.id);}
       catch(error){this.store.markOutboxFailed(item.id,'Slack delivery failed');const delay=Math.max(Number.isFinite(error.retryAfterMs)?error.retryAfterMs:0,Math.min(3600000,30000*2**Math.min(item.attempts,7)));this.store.setState(`reply-retry:${item.id}`,Date.now()+delay);}
     }}finally{this.sending=false;}

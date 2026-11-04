@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { defaults, validateConfig, saveConfig, loadConfig, resolveSecrets } from '../config.mjs';
+import { pollGithub, pollJenkins } from '../connectors/ci.mjs';
+import { SlackConnector } from '../connectors/slack.mjs';
 
 test('defaults are safe and resolve local paths', () => {
   const c = defaults('/tmp/superagent');
@@ -14,6 +16,52 @@ test('defaults are safe and resolve local paths', () => {
   assert.equal(c.slack.enabled, false);
   assert.deepEqual(c.gerrit, []);
   assert.equal(validateConfig(c), c);
+});
+test('GitHub configuration rejects limits and workflow selectors its connector cannot use', async () => {
+  const c=defaults('/tmp/superagent');
+  const github={id:'gh',baseUrl:'https://api.github.com',tokenEnv:'GITHUB_TOKEN',
+    repositories:[{owner:'example',repo:'project',workflows:['build.yml','check.yaml',77,'123']}],maxPages:20,timeoutMs:100};
+  const withGithub = value => ({...c,github:[value]});
+  const connector = value => pollGithub({...value,token:'fixture'},{fetch:async()=>Response.json({total_count:0,workflow_runs:[]})});
+  assert.doesNotThrow(()=>validateConfig(withGithub(github)));
+  assert.equal((await connector(github)).healthy,true);
+  for (const value of [{...github,maxPages:21},{...github,timeoutMs:99}]) {
+    assert.throws(()=>validateConfig(withGithub(value)));
+    await assert.rejects(connector(value),/connector limit/);
+  }
+  for (const workflows of [[''],['nested/build.yml'],['build.txt'],[0],[-1],[1.5],[Number.MAX_SAFE_INTEGER+1],Array(51).fill('build.yml')]) {
+    const value={...github,repositories:[{...github.repositories[0],workflows}]};
+    assert.throws(()=>validateConfig(withGithub(value)));
+    await assert.rejects(connector(value),/allowlist/);
+  }
+});
+test('Jenkins job paths accepted by configuration are usable by the connector', async () => {
+  const c=defaults('/tmp/superagent');
+  const jenkins={id:'ci',baseUrl:'https://ci.example.test',usernameEnv:'CI_USER',tokenEnv:'CI_TOKEN',jobs:['team/build service'],timeoutMs:100};
+  const fetch=async url=>Response.json(String(url).includes('/queue/')?{items:[]}:{builds:[]});
+  const connector = value => pollJenkins({...value,username:'reader',token:'fixture'},{fetch});
+  assert.doesNotThrow(()=>validateConfig({...c,jenkins:[jenkins]}));
+  assert.equal((await connector(jenkins)).healthy,true);
+  for (const job of ['team//build','team/../build','team/build\nname','team/\\build','x'.repeat(256)]) {
+    const value={...jenkins,jobs:[job]};
+    assert.throws(()=>validateConfig({...c,jenkins:[value]}));
+    await assert.rejects(connector(value),/job allowlist/);
+  }
+  const tooShort={...jenkins,timeoutMs:99};
+  assert.throws(()=>validateConfig({...c,jenkins:[tooShort]}));
+  await assert.rejects(connector(tooShort),/connector limit/);
+});
+test('enabled Slack identities accepted by configuration are usable by the connector', () => {
+  const c=defaults('/tmp/superagent');
+  const slack={...c.slack,enabled:true,teamId:'T1',botUserId:'UBOT',channelIds:['C1'],userIds:['U1']};
+  const connector = value => new SlackConnector({...value,appToken:'fixture',botToken:'fixture'},{onEvent() {}});
+  assert.doesNotThrow(()=>validateConfig({...c,slack}));
+  assert.doesNotThrow(()=>connector(slack));
+  for (const patch of [{teamId:'T-1'},{botUserId:'u1'},{channelIds:['C1','bad']},{userIds:['U1','U!']}]) {
+    const value={...slack,...patch};
+    assert.throws(()=>validateConfig({...c,slack:value}));
+    assert.throws(()=>connector(value),/Slack allowlist/);
+  }
 });
 test('Gerrit uses explicit project allowlists and environment-backed credentials, while old config stays valid', () => {
   const c=defaults('/tmp/superagent');
