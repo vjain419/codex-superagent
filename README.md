@@ -37,7 +37,7 @@ node --env-file=data/service.env main.mjs
 
 Open `http://127.0.0.1:3082`, using the admin token generated in private `service/data/service.env`. Configure a dedicated Codex home/account before requesting model work. State and secrets are ignored by Git. See [deployment instructions](deploy/README.md) for Slack, API tokens, repository selection and network requirements.
 
-## Intentional first-release boundaries
+## Current release boundaries
 
 - CI monitoring covers a configurable recent window. Coverage warnings are visible; it is not a lossless event archive. No webhook listener or CI build mutations.
 - Automatic CI repair requires verified repository identity and a matching local commit. Jenkins metadata currently lacks complete historical repository provenance, so automatic repair fails closed; observation and explicit investigation remain available.
@@ -48,5 +48,7 @@ Open `http://127.0.0.1:3082`, using the admin token generated in private `servic
 - Integration credentials and the live VM must be provided by the operator. [Verification evidence](docs/fork/verification.md) distinguishes fixture checks from real connections.
 
 ## Project records
+
+[Current architecture](docs/008-architecture_new.md) · [Critical comparison and required parity work](docs/008-architecture_diff.md) · [Visual review](docs/architecture-review.html)
 
 [Implementation plan](docs/fork/plan.md) · [Current context](context.md) · [Engineering skills](docs/skills.md) · [Agent conventions](AGENTS.md)
