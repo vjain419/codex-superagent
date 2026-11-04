@@ -21,7 +21,10 @@ function keys(value, allowed, name) {
   requireValue(Object.keys(value).every(k => allowed.includes(k)), `${name} contains unsupported fields`);
 }
 function envName(v) { return typeof v === 'string' && /^[A-Z][A-Z0-9_]*$/.test(v); }
+function slackId(v) { return typeof v === 'string' && /^[A-Z0-9]+$/.test(v); }
 function strings(v) { return Array.isArray(v) && v.every(s => typeof s === 'string' && s.length > 0 && s.length < 512); }
+function jobPart(v) { return v.length > 0 && v.length <= 255 && !['.', '..'].includes(v) && !/[\u0000-\u001f\u007f/\\]/.test(v); }
+function workflowId(v) { return (Number.isSafeInteger(v) && v > 0 || typeof v === 'string') && (/^\d+$/.test(String(v)) || /^(?!\.{1,2}$)[a-zA-Z0-9_.-]+\.ya?ml$/i.test(String(v))); }
 function url(v) {
   let u; try { u = new URL(v); } catch { return false; }
   return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash;
@@ -57,16 +60,16 @@ export function validateConfig(c) {
         if (p.timeoutMs !== undefined) requireValue(Number.isInteger(p.timeoutMs) && p.timeoutMs >= 100 && p.timeoutMs <= 60000, 'invalid timeoutMs');
       } else if (kind === 'jenkins') {
         requireValue(envName(p.usernameEnv), 'usernameEnv must name an environment variable');
-        requireValue(strings(p.jobs) && p.jobs.length > 0 && p.jobs.length <= 50, 'jobs must be explicitly configured');
+        requireValue(strings(p.jobs) && p.jobs.length > 0 && p.jobs.length <= 50 && p.jobs.every(job => job.split('/').every(jobPart)), 'jobs must be explicitly configured');
       } else {
         requireValue(Array.isArray(p.repositories) && p.repositories.length > 0 && p.repositories.length <= 50, 'repositories must be explicitly configured');
         for (const repo of p.repositories) {
           keys(repo,['owner','repo','workflows'],'repository');
           requireValue([repo.owner,repo.repo].every(v => typeof v === 'string' && /^[\w.-]+$/.test(v) && !['.','..'].includes(v)), 'invalid repository name');
-          requireValue(repo.workflows === undefined || Array.isArray(repo.workflows) && repo.workflows.every(v => typeof v === 'string' || Number.isInteger(v)), 'invalid workflows');
+          requireValue(repo.workflows === undefined || Array.isArray(repo.workflows) && repo.workflows.length <= 50 && repo.workflows.every(workflowId), 'invalid workflows');
         }
       }
-      for (const k of ['maxPages','perPage','maxBuilds','timeoutMs']) if (p[k] !== undefined) requireValue(Number.isInteger(p[k]) && p[k] > 0 && p[k] <= (k === 'timeoutMs' ? 60000 : 100), `invalid ${k}`);
+      for (const k of ['maxPages','perPage','maxBuilds','timeoutMs']) if (p[k] !== undefined) requireValue(Number.isInteger(p[k]) && p[k] >= (k === 'timeoutMs' ? 100 : 1) && p[k] <= (k === 'timeoutMs' ? 60000 : k === 'maxPages' ? 20 : 100), `invalid ${k}`);
     }
   }
   keys(c.slack,Object.keys(defaults().slack),'slack');
@@ -74,7 +77,7 @@ export function validateConfig(c) {
   requireValue(envName(c.slack.appTokenEnv) && envName(c.slack.botTokenEnv), 'Slack secrets must be environment references');
   requireValue(strings(c.slack.channelIds) && strings(c.slack.userIds), 'Slack allowlists must be arrays');
   requireValue(typeof c.slack.teamId === 'string' && typeof c.slack.botUserId === 'string', 'Slack identities must be strings');
-  if (c.slack.enabled) requireValue(c.slack.teamId && c.slack.botUserId && c.slack.channelIds.length && c.slack.userIds.length, 'enabled Slack requires explicit team/bot/channel/user identities');
+  if (c.slack.enabled) requireValue(slackId(c.slack.teamId) && slackId(c.slack.botUserId) && c.slack.channelIds.length && c.slack.channelIds.every(slackId) && c.slack.userIds.length && c.slack.userIds.every(slackId), 'enabled Slack requires valid team/bot/channel/user identities');
   keys(c.economics,Object.keys(defaults().economics),'economics');
   requireValue(typeof c.economics.currency === 'string' && /^[A-Z]{3}$/.test(c.economics.currency), 'currency requires three-letter code');
   for(const k of Object.keys(c.economics).filter(k=>k!=='currency')) requireValue(c.economics[k] === null || Number.isFinite(c.economics[k]) && c.economics[k] >= 0, `economics.${k} must be non-negative or null`);
