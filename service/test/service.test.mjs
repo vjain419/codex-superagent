@@ -107,3 +107,34 @@ test('authenticated ticket inspection distinguishes execution success from pendi
     assert.equal((await fetch(base+'tickets/unknown',{headers})).status,404);
   }finally{await new Promise(resolve=>server.close(resolve));store.close();}
 });
+
+test('delayed Slack replies do not starve a later ready reply',async()=>{
+  const store=new Store(':memory:'),config=defaults('/tmp/fixture-service'),sent=[];
+  const monitor=new Monitor({store,config,runtime:{},secrets:{},slack:{async send(reply,text){sent.push(text);}}});
+  const retryAt=Date.now()+3600000;
+  try{
+    const tickets=Array.from({length:21},(_,i)=>{
+      const {ticket}=store.ingest({source:'slack',kind:'request',id:`outbox-${i}`,authorized:true,text:`Request ${i}`,reply:{team:'T1',channel:'C1',threadTs:`${i+1}.2`}});
+      store.updateTicket(ticket.id,{status:'succeeded',result:`Result ${i}`});
+      return ticket;
+    });
+    const pending=store.listOutbox();
+    for(const item of pending.slice(0,20)){
+      store.markOutboxFailed(item.id,'Slack delivery failed');
+      store.setState(`reply-retry:${item.id}`,retryAt);
+    }
+    assert.equal(store.listOutbox().length,21,'inspection includes replies waiting for retry');
+    await monitor.flushReplies();
+    assert.equal(sent.length,1,'the ready reply beyond the worker batch is delivered');
+    assert.match(sent[0],/Result 20$/);
+    assert.equal(store.listDeliveries(tickets[20].id)[0].status,'sent');
+    assert.equal(store.listDeliveries(tickets[20].id)[0].attempts,1);
+    assert.equal(store.listOutbox().length,20);
+    for(const ticket of tickets.slice(0,20)){
+      const [delivery]=store.listDeliveries(ticket.id);
+      assert.equal(delivery.status,'pending');
+      assert.equal(delivery.attempts,1,'waiting replies are not attempted early');
+      assert.equal(delivery.nextAttemptAt,new Date(retryAt).toISOString());
+    }
+  }finally{store.close();}
+});
