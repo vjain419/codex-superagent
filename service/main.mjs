@@ -36,14 +36,15 @@ if(command==='init') {
     const executor=new CodexExecutor({command:config.codexCommand,model:config.model,effort:config.effort,timeoutMs:config.turnTimeoutMs,codexHome:config.codexHome});
     const runtime=new Runtime({store,executor,config});
     const health={startedAt:new Date().toISOString(),slack:config.slack.enabled?'connecting':'disabled',restartRequired:false};
-    const slack=secrets.slack?new SlackConnector(secrets.slack,{onEvent:event=>runtime.handleEvent(event),isThreadAuthorized:reply=>store.isThreadAuthorized(reply),onError:()=>{health.slack='error';},onStatus:status=>{health.slack=status;}}):null;
+    const slack=secrets.slack?new SlackConnector(secrets.slack,{onEvent:event=>{const result=runtime.handleEvent(event);queueMicrotask(flushReactions);return result;},isThreadAuthorized:reply=>store.isThreadAuthorized(reply),onError:()=>{health.slack='error';},onStatus:status=>{health.slack=status;}}):null;
     const monitor=new Monitor({runtime,store,config,secrets,slack});
-    const server=createServer({store,config,adminToken:secrets.adminToken,health:()=>({...health,providers:monitor.health,runtimeError:runtime.lastError?'Execution loop failed; inspect tickets':null}),
+    const server=createServer({store,config,adminToken:secrets.adminToken,health:()=>({...health,reactions:store.reactions.summary(),providers:monitor.health,runtimeError:runtime.lastError?'Execution loop failed; inspect tickets':null}),
       updateConfig:async(next,{restartRequired})=>{saveConfig(file,next);health.restartRequired ||= restartRequired;config.mode=next.mode;config.economics=next.economics;queueMicrotask(()=>runtime.drain().catch(()=>{}));},
       submit:text=>runtime.handleEvent({source:'manual',kind:'request',id:randomUUID(),authorized:true,text}),
       cancel:id=>runtime.cancel(id),
     });
-    let closing=false,pollTimer,outboxTimer;
+    let closing=false,pollTimer,outboxTimer,reactionTimer;
+    function flushReactions(){void monitor.flushReactions().then(()=>{health.reactionsError=null;},()=>{health.reactionsError='Slack reaction worker failed';});}
     server.listen(config.port,config.host,()=>console.log(`Codex Superagent listening on ${config.host}:${config.port} (${config.mode})`));
     server.on('error',()=>{console.error('HTTP listener failed');void shutdown();process.exitCode=1;});
     if(slack)try{await slack.start();health.slack='connected';}catch{health.slack='error';console.error('Slack connection failed; restart after checking environment and app settings');}
@@ -51,9 +52,10 @@ if(command==='init') {
     else {
     pollTimer=setInterval(()=>void monitor.tick(),config.pollSeconds*1000);
     outboxTimer=setInterval(()=>void monitor.flushReplies(),5000);
-    void monitor.tick();void runtime.drain();
+    reactionTimer=setInterval(flushReactions,5000);
+    void monitor.tick();flushReactions();void runtime.drain();
     }
-    async function shutdown(){if(closing)return;closing=true;clearInterval(pollTimer);clearInterval(outboxTimer);monitor.stop();await runtime.stop();await slack?.stop();await new Promise(resolve=>server.close(resolve));while(monitor.busy||monitor.sending)await new Promise(resolve=>setTimeout(resolve,20));store.close();ownership.close();}
+    async function shutdown(){if(closing)return;closing=true;clearInterval(pollTimer);clearInterval(outboxTimer);clearInterval(reactionTimer);monitor.stop();await runtime.stop();await slack?.stop();await new Promise(resolve=>server.close(resolve));while(monitor.busy||monitor.sending||monitor.reacting)await new Promise(resolve=>setTimeout(resolve,20));store.close();ownership.close();}
     for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>void shutdown());
   }
 }

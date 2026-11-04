@@ -60,13 +60,17 @@ Adapt `superagent.service.example` to the actual Node executable and installatio
 
 The repository already includes [`slack-manifest.json`](slack-manifest.json). A dedicated app/bot keeps permissions and credentials separate from other apps. An existing app can work if its owner adds the required scopes, event subscription and Socket Mode settings; reinstall after scope changes.
 
-1. In [Slack app management](https://api.slack.com/apps), choose **Create New App → From a manifest** and paste the JSON manifest. Select a test workspace and follow its app-approval policy. The manifest enables Socket Mode, `app_mention` events and bot scopes `app_mentions:read` + `chat:write`.
+1. In [Slack app management](https://api.slack.com/apps), choose **Create New App → From a manifest** and paste the JSON manifest. Select a test workspace and follow its app-approval policy. The manifest enables Socket Mode, `app_mention` and `message.channels` events, and bot scopes `app_mentions:read`, `chat:write`, `reactions:write` and `channels:history`.
 2. Under **Basic Information → App-Level Tokens**, generate an app token with `connections:write`. Store it as `SLACK_APP_TOKEN` in the private VM environment file. This app-token scope is separate from the manifest's bot scopes.
 3. Install the app to the workspace. Store the **Bot User OAuth Token** as `SLACK_BOT_TOKEN` in that same private file; never paste either token into dashboard JSON, issues or chat.
 4. Set `slack.enabled=true`, exact `teamId`, `botUserId`, `channelIds`, and `userIds` in the dashboard configuration. `botUserId` is the bot's user ID, not the app ID; Slack's authenticated `auth.test` response supplies `team_id` and `user_id`. Invite the bot to the allowlisted channel.
 5. Restart the service, check Slack connection health, then send an explicit `@Codex Superagent` task from an allowlisted user. Codex authentication and a trusted repository must also be configured before code tasks can succeed.
 
-Mention the bot again for followups with the minimal manifest; broader message subscriptions are not enabled by default. Manifest creation/update behavior: [Slack documentation](https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests/).
+For an existing app, open [Slack app management](https://api.slack.com/apps), select the app, then use **Event Subscriptions → Subscribe to bot events → Add Bot User Event** to add `message.channels`; save changes. Add any missing bot scopes under **OAuth & Permissions** and reinstall only if the installed token needs new scopes. Slack starts delivering an added event without reinstall when its required scope is already granted. See [Slack app update guidance](https://docs.slack.dev/app-management/distribution/#when-is-a-reinstall-required).
+
+For followups in a private channel, also grant `groups:history` and subscribe to `message.groups`, then invite the bot to the channel. `channels:history` and `groups:history` allow Slack to deliver messages from channels the app has joined, including messages outside the local allowlist. The service accepts only configured teams, channels and users, and non-mention messages only in an already authorized thread. An app mention and its corresponding message event are handled once. Each followup is a separate ticket that resumes the thread's retained Codex conversation and isolated workspace; missing saved state fails closed.
+
+Accepted requests receive `:eyes:` on the original message. On success the service removes `:eyes:` and adds `:done:`, falling back to `:white_check_mark:` when the workspace lacks that emoji. Failure or interruption uses `:x:`. Reactions retry independently of execution and replies; service health reports pending reactions and failed attempts. Forwarded attachment text included in a request is bounded and marked as untrusted evidence; attachment links are not fetched.
 
 No webhook listener is required. Outbound access is required to Slack HTTPS/WebSocket endpoints. Terminal ticket results go through a durable retrying outbox. Network ambiguity can cause duplicate Slack delivery (at-least-once delivery); ticket IDs in messages make it identifiable. CI completion notifications use the first allowlisted Slack channel.
 
@@ -138,7 +142,7 @@ The worker supports a trusted local Git checkout independently of GitHub. Clone/
 
 For an explicit Gerrit review, use a dedicated staging checkout. Pause new work, wait for any active task to finish, verify the change and patchset in Gerrit, then fetch its exact `refs/changes/...` ref with your approved Git workflow. Check out the verified full commit SHA in that staging checkout. Resume and submit an explicit Slack/UI task; text-only tasks use the configured repository's committed `HEAD`. Include the trusted base SHA and desired review scope in the request. Uncommitted changes are not copied into the task checkout. Keep the staging checkout stable while a task is being accepted.
 
-Each task gets a sanitized local clone retained for inspection. Publishing a patch back to Gerrit (`refs/for/...`), updating review labels and submitting remain operator actions. Monitoring Gerrit plus Jenkins does not automatically correlate change numbers to builds in this release.
+A sanitized local clone is retained for inspection; followups in the same Slack thread reuse it. Publishing a patch back to Gerrit (`refs/for/...`), updating review labels and submitting remain operator actions. Monitoring Gerrit plus Jenkins does not automatically correlate change numbers to builds in this release.
 
 ## Operating modes, economics and backup
 

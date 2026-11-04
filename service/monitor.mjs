@@ -40,5 +40,14 @@ export class Monitor {
       catch(error){this.store.markOutboxFailed(item.id,'Slack delivery failed');const delay=Math.max(Number.isFinite(error.retryAfterMs)?error.retryAfterMs:0,Math.min(3600000,30000*2**Math.min(item.attempts,7)));this.store.setState(`reply-retry:${item.id}`,Date.now()+delay);}
     }}finally{this.sending=false;}
   }
+  async flushReactions() {
+    if(!this.slack||this.reacting||this.stopped)return;this.reacting=true;
+    try{for(let i=0;i<20;i++){
+      if(this.stopped)break;
+      const [item]=this.store.reactions.listPending({limit:1});if(!item)break;
+      try{await this.slack.react(item.destination,item.phase);this.store.reactions.markSent(item.id,item.revision);}
+      catch(error){const delay=Math.max(Number.isFinite(error.retryAfterMs)?error.retryAfterMs:0,Math.min(3600000,30000*2**Math.min(item.attempts,7)));this.store.reactions.markFailed(item.id,item.revision,'Slack reaction failed',Date.now()+delay);}
+    }}finally{this.reacting=false;}
+  }
   stop(){this.stopped=true;}
 }
